@@ -4,7 +4,7 @@ KoloAI digitizes traditional Nigerian Ajo group savings using Monnify's payment 
 
 ## Features
 
-- **Group Creation Wizard** - Create Fixed Savings or Rotating Ajo groups in under 2 minutes
+- **Group Creation** - Create Fixed Savings or Rotating Ajo groups in under 2 minutes
 - **Monnify Virtual Accounts** - Generate virtual bank accounts for seamless contributions
 - **Webhook Verification** - Real-time payment confirmation and automated reconciliation
 - **Rotating Ajo Tracker** - Visual payout rotation timeline showing current recipient and history
