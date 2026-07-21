@@ -592,7 +592,6 @@ export default function LoginPage() {
                   fontWeight: 600,
                   color: "#6e7b6c",
                   textTransform: "uppercase",
-                  letterSpacing: "0.1em",
                   fontFamily: "'Geist', sans-serif",
                 }}
               >
