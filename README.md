@@ -1,6 +1,6 @@
 # KoloAI - AI-Powered Group Savings Platform
 
-KoloAI digitizes traditional Nigerian Ajo/Esusu group savings using Monnify's payment infrastructure. Built for the API Conference Lagos 2026 Developer Challenge.
+KoloAI digitizes traditional Nigerian Ajo group savings using Monnify's payment infrastructure. Built for the API Conference Lagos 2026 Developer Challenge.
 
 ## Features
 
