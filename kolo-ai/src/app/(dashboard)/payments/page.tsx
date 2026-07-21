@@ -131,7 +131,7 @@ function PaymentsContent() {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", marginBottom: "20px" }}>
                 <span style={{ fontSize: "11px", color: "#6e7b6c", fontWeight: 500 }}>Payments powered by</span>
                 <div style={{ display: "flex", alignItems: "center", gap: "4px", background: "#f8f9ff", padding: "4px 10px", borderRadius: "6px" }}>
-                  <img src="https://monnify.com/wp-content/uploads/2023/05/Monnify-Logo-1.svg" alt="Monnify" style={{ height: "16px", opacity: 0.8 }} />
+                  <img src="/monnifylogo.svg" alt="Monnify" style={{ height: "16px", opacity: 0.8 }} />
                 </div>
               </div>
 
@@ -189,7 +189,7 @@ function PaymentsContent() {
               {/* Monnify Logo */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", marginBottom: "24px", padding: "8px 16px", background: "#f8f9ff", borderRadius: "20px", width: "fit-content", margin: "0 auto 24px" }}>
                 <span style={{ fontSize: "11px", color: "#6e7b6c", fontWeight: 500 }}>Secured by</span>
-                <img src="https://monnify.com/wp-content/uploads/2023/05/Monnify-Logo-1.svg" alt="Monnify" style={{ height: "14px" }} />
+                <img src="/monnifylogo.svg" alt="Monnify" style={{ height: "16px", opacity: 0.8 }} />
               </div>
 
               <div style={{ textAlign: "center", marginBottom: "28px" }}>
@@ -255,7 +255,7 @@ function PaymentsContent() {
               </div>
               <div style={{ marginTop: "32px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", opacity: 0.6 }}>
                 <span style={{ fontSize: "11px", color: "#6e7b6c" }}>Verified by</span>
-                <img src="https://monnify.com/wp-content/uploads/2023/05/Monnify-Logo-1.svg" alt="Monnify" style={{ height: "12px", filter: "grayscale(1)" }} />
+                <img src="/monnifylogo.svg" alt="Monnify" style={{ height: "16px", opacity: 0.8 }} />
               </div>
             </div>
           )}
