@@ -106,7 +106,11 @@ export default function GroupDetailPage() {
             <Link href="/groups" style={{ color: "#3e4a3d", textDecoration: "none", display: "flex", alignItems: "center" }}><span className="material-symbols-outlined">arrow_back</span></Link>
             <div>
               <h2 style={{ fontSize: "24px", fontWeight: 600, fontFamily: "'Inter', sans-serif", color: "#006b2c" }}>{group.name}</h2>
-              {isRotatingAjo && <span style={{ fontSize: "12px", color: "#825100", fontFamily: "'Geist', sans-serif" }}>🔄 Rotating Ajo</span>}
+              {isRotatingAjo && (
+                <span style={{ fontSize: "12px", color: "#825100", fontFamily: "'Geist', sans-serif", display: "flex", alignItems: "center", gap: "4px" }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>cached</span> Rotating Ajo
+                </span>
+              )}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -136,7 +140,7 @@ export default function GroupDetailPage() {
         ))}
       </section>
 
-      {/* 🔄 ROTATING AJO TRACKER */}
+      {/* ROTATING AJO TRACKER */}
       {isRotatingAjo && (
         <section style={{ background: "rgba(255, 255, 255, 0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(255, 221, 184, 0.5)", boxShadow: "0 4px 20px rgba(130, 81, 0, 0.06)", borderRadius: "12px", padding: "24px", marginBottom: "24px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px", flexWrap: "wrap", gap: "16px" }}>
@@ -147,8 +151,8 @@ export default function GroupDetailPage() {
               <div>
                 <h3 style={{ fontSize: "20px", fontWeight: 600, color: "#0b1c30" }}>Rotating Ajo — Payout Order</h3>
                 <p style={{ fontSize: "13px", color: "#3e4a3d" }}>
-                  Each member receives <strong>{formatNaira(totalPayout)}</strong> when it's their turn • 
-                  {group.current_rotation_index !== undefined && ` ${group.rotation_order.length - group.current_rotation_index - 1} people before next round`}
+                  Each member receives <strong>{formatNaira(totalPayout)}</strong> when it's their turn
+                  {group.current_rotation_index !== undefined && ` • ${group.rotation_order.length - group.current_rotation_index - 1} people before next round`}
                 </p>
               </div>
             </div>
@@ -182,7 +186,13 @@ export default function GroupDetailPage() {
                       boxShadow: isCurrentRecipient ? "0 0 16px rgba(130, 81, 0, 0.3)" : "none",
                       position: "relative",
                     }}>
-                      {hasReceived ? <span className="material-symbols-outlined" style={{ fontSize: "22px" }}>check</span> : (isCurrentRecipient ? "🎯" : getInitials(memberName))}
+                      {hasReceived ? (
+                        <span className="material-symbols-outlined" style={{ fontSize: "22px" }}>check</span>
+                      ) : isCurrentRecipient ? (
+                        <span className="material-symbols-outlined" style={{ fontSize: "22px", fontVariationSettings: "'FILL' 1" }}>arrow_circle_down</span>
+                      ) : (
+                        getInitials(memberName)
+                      )}
                       {isCurrentRecipient && !hasReceived && (
                         <span style={{ position: "absolute", top: "-8px", right: "-8px", backgroundColor: "#006b2c", color: "#fff", fontSize: "9px", padding: "2px 6px", borderRadius: "8px", fontWeight: 700 }}>NOW</span>
                       )}
@@ -243,7 +253,7 @@ export default function GroupDetailPage() {
                 <div style={{ padding: "60px 24px", textAlign: "center", color: "#3e4a3d" }}>
                   <span className="material-symbols-outlined" style={{ fontSize: "48px", display: "block", marginBottom: "16px", color: "#bdcaba" }}>groups</span>
                   <p style={{ fontSize: "14px" }}>No members yet.</p>
-                  {isAdmin && <Link href={`/groups/${id}/add-members`} style={{ color: "#006b2c", fontWeight: 600, textDecoration: "underline", marginTop: "8px", display: "inline-block" }}>Invite members now →</Link>}
+                  {isAdmin && <Link href={`/groups/${id}/add-members`} style={{ color: "#006b2c", fontWeight: 600, textDecoration: "underline", marginTop: "8px", display: "inline-block" }}>Invite members now</Link>}
                 </div>
               ) : (
                 <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
@@ -281,11 +291,17 @@ export default function GroupDetailPage() {
                           <td style={{ padding: "16px 24px" }}>
                             {isRotatingAjo ? (
                               m.has_received_payout ? (
-                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#006b2c", fontFamily: "'Geist', sans-serif" }}>✅ Paid</span>
+                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#006b2c", fontFamily: "'Geist', sans-serif", display: "flex", alignItems: "center", gap: "4px" }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>check_circle</span> Paid
+                                </span>
                               ) : group.rotation_order?.[group.current_rotation_index] === m.user_id ? (
-                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#825100", fontFamily: "'Geist', sans-serif" }}>🎯 Current</span>
+                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#825100", fontFamily: "'Geist', sans-serif", display: "flex", alignItems: "center", gap: "4px" }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>arrow_circle_down</span> Current
+                                </span>
                               ) : (
-                                <span style={{ fontSize: "12px", color: "#6e7b6c" }}>Waiting</span>
+                                <span style={{ fontSize: "12px", color: "#6e7b6c", display: "flex", alignItems: "center", gap: "4px" }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>schedule</span> Waiting
+                                </span>
                               )
                             ) : (
                               <span style={{ fontSize: "12px", color: "#6e7b6c" }}>—</span>
@@ -306,7 +322,7 @@ export default function GroupDetailPage() {
           <div style={{ padding: "24px", borderRadius: "12px", backgroundColor: "#0b1c30", color: "#f8f9ff", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: "-40px", right: "-40px", width: "160px", height: "160px", backgroundColor: "rgba(0, 107, 44, 0.2)", borderRadius: "50%", filter: "blur(40px)" }} />
             <p style={{ fontSize: "14px", opacity: 0.8, marginBottom: "4px", position: "relative", zIndex: 10 }}>
-              {isRotatingAjo ? "Contribution per member" : "Contribution per member"}
+              Contribution per member
             </p>
             <h3 style={{ fontSize: "28px", fontWeight: 600, color: "#62df7d", marginBottom: isRotatingAjo ? "8px" : "16px", position: "relative", zIndex: 10 }}>{formatNaira(contributionAmount)}</h3>
             {isRotatingAjo && (
@@ -329,7 +345,16 @@ export default function GroupDetailPage() {
               <h4 style={{ fontSize: "14px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Group Info</h4>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "14px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Type</span><span style={{ fontWeight: 500, color: isRotatingAjo ? "#825100" : "#006b2c" }}>{isRotatingAjo ? "🔄 Rotating Ajo" : "Fixed Savings"}</span></div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#3e4a3d" }}>Type</span>
+                <span style={{ fontWeight: 500, color: isRotatingAjo ? "#825100" : "#006b2c", display: "flex", alignItems: "center", gap: "4px" }}>
+                  {isRotatingAjo ? (
+                    <><span className="material-symbols-outlined" style={{ fontSize: "14px" }}>cached</span> Rotating Ajo</>
+                  ) : (
+                    <><span className="material-symbols-outlined" style={{ fontSize: "14px" }}>savings</span> Fixed Savings</>
+                  )}
+                </span>
+              </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Cycle</span><span style={{ fontWeight: 500 }}>#{group.cycle_number || 1}</span></div>
               <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Contribution</span><span style={{ fontWeight: 500, color: "#006b2c" }}>{formatNaira(contributionAmount)}</span></div>
               <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Created</span><span style={{ fontWeight: 500 }}>{formatDate(group.created_at)}</span></div>
