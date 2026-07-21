@@ -10,7 +10,7 @@ KoloAI digitizes traditional Nigerian Ajo group savings using Monnify's payment 
 - **Rotating Ajo Tracker** - Visual payout rotation timeline showing current recipient and history
 - **Member Management** - Invite members via email or shareable links with role assignment
 - **Real-time Dashboard** - Contribution analytics, monthly breakdowns, and transaction history
-- **Mobile Responsive** - Fully responsive across all screen sizes
+- **Mobile Responsive** - Fully responsive across all screen sizes 
 
 ## Tech Stack
 
