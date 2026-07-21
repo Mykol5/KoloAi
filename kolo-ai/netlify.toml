@@ -2,11 +2,5 @@
   command = "yarn build"
   publish = ".next"
 
-[build.environment]
-NEXT_PUBLIC_APP_URL=https://kolo-ai.netlify.app/
-NEXT_PUBLIC_SUPABASE_URL=https://slfmxepcfwqgxjeyrlmh.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsZm14ZXBjZndxZ3hqZXlybG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0OTI1NzUsImV4cCI6MjEwMDA2ODU3NX0.QtEB1Jk5nQhTqwQpU2_CoVlFrdmwHHJG_O8H39Obv0I
-
-
 [[plugins]]
   package = "@netlify/plugin-nextjs"

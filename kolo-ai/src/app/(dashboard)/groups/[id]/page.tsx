@@ -15,116 +15,85 @@ export default function GroupDetailPage() {
   const [contributions, setContributions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [processingPayout, setProcessingPayout] = useState(false);
 
   const fetchAllData = useCallback(async () => {
     setLoading(true);
-    
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      router.push("/login");
-      return;
-    }
+    if (!user) { router.push("/login"); return; }
     setCurrentUserId(user.id);
 
-    // Fetch group
-    const { data: groupData } = await supabase
-      .from("groups")
-      .select("*")
-      .eq("id", id)
-      .single();
-    
+    const { data: groupData } = await supabase.from("groups").select("*").eq("id", id).single();
     if (groupData) setGroup(groupData);
 
-    // Fetch members
-    const { data: memberData } = await supabase
-      .from("group_members")
-      .select("user_id, role, joined_at")
-      .eq("group_id", id);
+    const { data: memberData } = await supabase.from("group_members").select("user_id, role, joined_at, rotation_position, has_received_payout, payout_amount").eq("group_id", id);
 
     if (memberData && memberData.length > 0) {
       const userIds = memberData.map((m: any) => m.user_id);
-      
-      // Fetch profiles for these users
-      const { data: profilesData } = await supabase
-        .from("profiles")
-        .select("id, full_name, avatar_url")
-        .in("id", userIds);
-
-      // Merge profiles into members
+      const { data: profilesData } = await supabase.from("profiles").select("id, full_name, avatar_url").in("id", userIds);
       const membersWithProfiles = memberData.map((m: any) => {
         const profile = profilesData?.find((p: any) => p.id === m.user_id);
-        return {
-          ...m,
-          profiles: profile || {
-            full_name: `User ${m.user_id.slice(0, 6)}`,
-            avatar_url: null,
-          },
-        };
+        return { ...m, profiles: profile || { full_name: `User ${m.user_id.slice(0, 6)}`, avatar_url: null } };
       });
-      
       setMembers(membersWithProfiles);
     } else {
       setMembers([]);
     }
 
-    // Fetch contributions
-    const { data: contribData } = await supabase
-      .from("contributions")
-      .select("*")
-      .eq("group_id", id)
-      .order("created_at", { ascending: false });
-    
+    const { data: contribData } = await supabase.from("contributions").select("*").eq("group_id", id).order("created_at", { ascending: false });
     if (contribData) setContributions(contribData);
 
     setLoading(false);
   }, [id, supabase, router]);
 
-  // Initial fetch
-  useEffect(() => {
-    if (id) fetchAllData();
-  }, [id, fetchAllData]);
+  useEffect(() => { if (id) fetchAllData(); }, [id, fetchAllData]);
 
-  // Refresh on focus and visibility change
   useEffect(() => {
     const handleRefresh = () => fetchAllData();
-
     window.addEventListener("focus", handleRefresh);
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") handleRefresh();
-    });
-
-    return () => {
-      window.removeEventListener("focus", handleRefresh);
-      document.removeEventListener("visibilitychange", handleRefresh);
-    };
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") handleRefresh(); });
+    return () => { window.removeEventListener("focus", handleRefresh); document.removeEventListener("visibilitychange", handleRefresh); };
   }, [fetchAllData]);
 
   const formatNaira = (amount: number) => `₦${amount.toLocaleString("en-NG")}`;
-
-  const formatDate = (dateStr: string) =>
-    new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
-
-  const getInitials = (name: string) =>
-    name?.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2) || "??";
+  const formatDate = (dateStr: string) => new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+  const getInitials = (name: string) => name?.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2) || "??";
 
   const totalContributions = contributions.filter((c) => c.status === "completed").reduce((sum, c) => sum + c.amount, 0);
   const pendingMembers = contributions.filter((c) => c.status === "pending").length;
+  const contributionAmount = group?.contribution_amount || 50000;
+  const isRotatingAjo = group?.rotation_order && group.rotation_order.length > 0;
+  const totalPayout = contributionAmount * members.length;
 
-  if (loading) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontFamily: "'Inter', sans-serif", color: "#3e4a3d", fontSize: "16px" }}>
-        Loading group details...
-      </div>
-    );
-  }
+  const handleMarkPayout = async () => {
+    if (!isRotatingAjo) return;
+    setProcessingPayout(true);
+    try {
+      const currentRecipientId = group.rotation_order[group.current_rotation_index];
+      
+      await supabase.from("group_members").update({
+        has_received_payout: true,
+        payout_received_at: new Date().toISOString(),
+        payout_amount: totalPayout,
+      }).eq("group_id", id).eq("user_id", currentRecipientId);
 
-  if (!group) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontFamily: "'Inter', sans-serif", color: "#3e4a3d", fontSize: "16px" }}>
-        Group not found.
-      </div>
-    );
-  }
+      const nextIndex = (group.current_rotation_index + 1) % group.rotation_order.length;
+      await supabase.from("groups").update({
+        current_rotation_index: nextIndex,
+        last_payout_date: new Date().toISOString(),
+        next_payout_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      }).eq("id", id);
+
+      await fetchAllData();
+    } catch (err) {
+      console.error("Payout error:", err);
+    } finally {
+      setProcessingPayout(false);
+    }
+  };
+
+  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontFamily: "'Inter', sans-serif", color: "#3e4a3d", fontSize: "16px" }}>Loading group details...</div>;
+  if (!group) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontFamily: "'Inter', sans-serif", color: "#3e4a3d", fontSize: "16px" }}>Group not found.</div>;
 
   const isAdmin = members.find((m: any) => m.user_id === currentUserId && m.role === "admin") || group.created_by === currentUserId;
 
@@ -134,23 +103,17 @@ export default function GroupDetailPage() {
       <header style={{ width: "100%", position: "sticky", top: 0, zIndex: 40, backgroundColor: "rgba(248, 249, 255, 0.7)", backdropFilter: "blur(12px)", borderBottom: "1px solid rgba(189, 202, 186, 0.3)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", marginBottom: "24px", marginLeft: "-24px", marginRight: "-24px", paddingLeft: "24px", paddingRight: "24px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", maxWidth: "1280px", margin: "0 auto", width: "100%" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            <Link href="/groups" style={{ color: "#3e4a3d", textDecoration: "none", display: "flex", alignItems: "center" }}>
-              <span className="material-symbols-outlined">arrow_back</span>
-            </Link>
-            <h2 style={{ fontSize: "24px", fontWeight: 600, fontFamily: "'Inter', sans-serif", color: "#006b2c" }}>{group.name}</h2>
+            <Link href="/groups" style={{ color: "#3e4a3d", textDecoration: "none", display: "flex", alignItems: "center" }}><span className="material-symbols-outlined">arrow_back</span></Link>
+            <div>
+              <h2 style={{ fontSize: "24px", fontWeight: 600, fontFamily: "'Inter', sans-serif", color: "#006b2c" }}>{group.name}</h2>
+              {isRotatingAjo && <span style={{ fontSize: "12px", color: "#825100", fontFamily: "'Geist', sans-serif" }}>🔄 Rotating Ajo</span>}
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <button
-              onClick={fetchAllData}
-              title="Refresh data"
-              style={{ padding: "8px", borderRadius: "50%", border: "none", cursor: "pointer", backgroundColor: "#e5eeff", color: "#006b2c", display: "flex", alignItems: "center", justifyContent: "center" }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>refresh</span>
-            </button>
+            <button onClick={fetchAllData} title="Refresh" style={{ padding: "8px", borderRadius: "50%", border: "none", cursor: "pointer", backgroundColor: "#e5eeff", color: "#006b2c", display: "flex", alignItems: "center", justifyContent: "center" }}><span className="material-symbols-outlined" style={{ fontSize: "20px" }}>refresh</span></button>
             {isAdmin && (
               <Link href={`/groups/${id}/add-members`} style={{ padding: "10px 20px", backgroundColor: "#006b2c", color: "#ffffff", borderRadius: "8px", fontWeight: 500, fontSize: "14px", fontFamily: "'Geist', sans-serif", textDecoration: "none", display: "flex", alignItems: "center", gap: "8px" }}>
-                <span className="material-symbols-outlined">person_add</span>
-                Add Members
+                <span className="material-symbols-outlined">person_add</span>Add Members
               </Link>
             )}
           </div>
@@ -161,17 +124,108 @@ export default function GroupDetailPage() {
       <section style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "24px", marginBottom: "24px" }}>
         {[
           { label: "Total Pooled", value: formatNaira(group.pool_amount || 0), sub: `Cycle ${group.cycle_number || 1}` },
+          { label: "Contribution", value: formatNaira(contributionAmount), sub: "Per member / cycle" },
           { label: "Members", value: `${members.length} / ${group.max_members || 20}`, sub: `${Math.round((members.length / (group.max_members || 20)) * 100)}% filled` },
-          { label: "Contributions", value: formatNaira(totalContributions), sub: `${contributions.length} total` },
-          { label: "Status", value: group.status === "active" ? "Active" : group.status || "Active", sub: `${pendingMembers} pending` },
+          { label: isRotatingAjo ? "Next Payout" : "Status", value: isRotatingAjo ? (group.next_payout_date ? formatDate(group.next_payout_date) : "TBD") : (group.status === "active" ? "Active" : group.status || "Active"), sub: isRotatingAjo ? `${formatNaira(totalPayout)} pool` : `${pendingMembers} pending` },
         ].map((kpi) => (
           <div key={kpi.label} style={{ background: "rgba(255, 255, 255, 0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(226, 232, 240, 0.8)", boxShadow: "0 4px 20px rgba(15, 23, 42, 0.04)", borderRadius: "12px", padding: "24px" }}>
             <p style={{ fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", color: "#3e4a3d", marginBottom: "8px" }}>{kpi.label}</p>
-            <h3 style={{ fontSize: "28px", fontWeight: 700, fontFamily: "'Inter', sans-serif", color: kpi.label === "Total Pooled" ? "#006b2c" : "#0b1c30", marginBottom: "4px" }}>{kpi.value}</h3>
+            <h3 style={{ fontSize: "24px", fontWeight: 700, fontFamily: "'Inter', sans-serif", color: kpi.label === "Total Pooled" ? "#006b2c" : "#0b1c30", marginBottom: "4px" }}>{kpi.value}</h3>
             <p style={{ fontSize: "12px", color: "#6e7b6c", fontFamily: "'Geist', sans-serif" }}>{kpi.sub}</p>
           </div>
         ))}
       </section>
+
+      {/* 🔄 ROTATING AJO TRACKER */}
+      {isRotatingAjo && (
+        <section style={{ background: "rgba(255, 255, 255, 0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(255, 221, 184, 0.5)", boxShadow: "0 4px 20px rgba(130, 81, 0, 0.06)", borderRadius: "12px", padding: "24px", marginBottom: "24px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px", flexWrap: "wrap", gap: "16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <div style={{ width: "48px", height: "48px", borderRadius: "12px", backgroundColor: "rgba(130, 81, 0, 0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span className="material-symbols-outlined" style={{ color: "#825100", fontSize: "28px" }}>cached</span>
+              </div>
+              <div>
+                <h3 style={{ fontSize: "20px", fontWeight: 600, color: "#0b1c30" }}>Rotating Ajo — Payout Order</h3>
+                <p style={{ fontSize: "13px", color: "#3e4a3d" }}>
+                  Each member receives <strong>{formatNaira(totalPayout)}</strong> when it's their turn • 
+                  {group.current_rotation_index !== undefined && ` ${group.rotation_order.length - group.current_rotation_index - 1} people before next round`}
+                </p>
+              </div>
+            </div>
+            {group.next_payout_date && (
+              <div style={{ textAlign: "right" }}>
+                <p style={{ fontSize: "11px", color: "#6e7b6c", textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'Geist', sans-serif" }}>Next Payout</p>
+                <p style={{ fontSize: "18px", fontWeight: 600, color: "#825100" }}>{formatDate(group.next_payout_date)}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Rotation Timeline */}
+          <div style={{ display: "flex", alignItems: "center", gap: "0", overflowX: "auto", padding: "20px 8px" }}>
+            {group.rotation_order.map((userId: string, index: number) => {
+              const member = members.find((m: any) => m.user_id === userId);
+              const isCurrentRecipient = index === group.current_rotation_index;
+              const hasReceived = member?.has_received_payout;
+              const memberName = member?.profiles?.full_name || `User ${userId.slice(0, 6)}`;
+              const isPast = index < group.current_rotation_index;
+
+              return (
+                <div key={userId} style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
+                    <div style={{
+                      width: "56px", height: "56px", borderRadius: "50%",
+                      backgroundColor: isCurrentRecipient ? "#825100" : hasReceived ? "#006b2c" : "#e5eeff",
+                      color: isCurrentRecipient || hasReceived ? "#ffffff" : "#3e4a3d",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontWeight: 700, fontSize: "16px",
+                      border: isCurrentRecipient ? "3px solid #ffddb8" : hasReceived ? "3px solid #62df7d" : "2px solid rgba(189, 202, 186, 0.3)",
+                      boxShadow: isCurrentRecipient ? "0 0 16px rgba(130, 81, 0, 0.3)" : "none",
+                      position: "relative",
+                    }}>
+                      {hasReceived ? <span className="material-symbols-outlined" style={{ fontSize: "22px" }}>check</span> : (isCurrentRecipient ? "🎯" : getInitials(memberName))}
+                      {isCurrentRecipient && !hasReceived && (
+                        <span style={{ position: "absolute", top: "-8px", right: "-8px", backgroundColor: "#006b2c", color: "#fff", fontSize: "9px", padding: "2px 6px", borderRadius: "8px", fontWeight: 700 }}>NOW</span>
+                      )}
+                    </div>
+                    <span style={{ fontSize: "11px", fontWeight: 500, textAlign: "center", maxWidth: "70px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0b1c30" }}>
+                      {memberName}
+                    </span>
+                    <span style={{ fontSize: "10px", color: isCurrentRecipient ? "#825100" : hasReceived ? "#006b2c" : "#6e7b6c", fontWeight: 600 }}>
+                      {isCurrentRecipient ? "Receiving" : hasReceived ? `Got ${formatNaira(member?.payout_amount || totalPayout)}` : `#${index + 1}`}
+                    </span>
+                  </div>
+                  {index < group.rotation_order.length - 1 && (
+                    <div style={{ width: "36px", height: "2px", backgroundColor: isPast ? "#006b2c" : "#e5eeff", margin: "0 4px", marginBottom: "20px" }} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Admin Payout Button */}
+          {isAdmin && (
+            <div style={{ marginTop: "20px", paddingTop: "20px", borderTop: "1px solid rgba(189, 202, 186, 0.3)" }}>
+              <button
+                onClick={handleMarkPayout}
+                disabled={processingPayout}
+                style={{
+                  width: "100%", padding: "14px", backgroundColor: processingPayout ? "#6e7b6c" : "#825100",
+                  color: "#ffffff", borderRadius: "8px", border: "none", cursor: processingPayout ? "not-allowed" : "pointer",
+                  fontWeight: 600, fontSize: "14px", fontFamily: "'Geist', sans-serif",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+                  boxShadow: "0 4px 12px rgba(130, 81, 0, 0.2)", transition: "all 0.2s",
+                }}
+              >
+                <span className="material-symbols-outlined">payments</span>
+                {processingPayout ? "Processing..." : `Mark Payout Complete — ${formatNaira(totalPayout)}`}
+              </button>
+              <p style={{ fontSize: "11px", color: "#6e7b6c", textAlign: "center", marginTop: "8px", fontFamily: "'Geist', sans-serif" }}>
+                This will mark the current recipient as paid and move to the next person in rotation.
+              </p>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Members Table */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px" }}>
@@ -180,14 +234,8 @@ export default function GroupDetailPage() {
             <div style={{ padding: "16px 24px", borderBottom: "1px solid rgba(189, 202, 186, 0.3)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <h4 style={{ fontSize: "18px", fontWeight: 600, fontFamily: "'Inter', sans-serif" }}>Members ({members.length})</h4>
               <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                <button onClick={fetchAllData} style={{ background: "none", border: "none", cursor: "pointer", color: "#6e7b6c", padding: "4px" }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: "18px" }}>refresh</span>
-                </button>
-                {isAdmin && (
-                  <Link href={`/groups/${id}/add-members`} style={{ color: "#006b2c", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", textDecoration: "none" }}>
-                    + Add Members
-                  </Link>
-                )}
+                <button onClick={fetchAllData} style={{ background: "none", border: "none", cursor: "pointer", color: "#6e7b6c", padding: "4px" }}><span className="material-symbols-outlined" style={{ fontSize: "18px" }}>refresh</span></button>
+                {isAdmin && <Link href={`/groups/${id}/add-members`} style={{ color: "#006b2c", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", textDecoration: "none" }}>+ Add Members</Link>}
               </div>
             </div>
             <div style={{ overflowX: "auto" }}>
@@ -195,11 +243,7 @@ export default function GroupDetailPage() {
                 <div style={{ padding: "60px 24px", textAlign: "center", color: "#3e4a3d" }}>
                   <span className="material-symbols-outlined" style={{ fontSize: "48px", display: "block", marginBottom: "16px", color: "#bdcaba" }}>groups</span>
                   <p style={{ fontSize: "14px" }}>No members yet.</p>
-                  {isAdmin && (
-                    <Link href={`/groups/${id}/add-members`} style={{ color: "#006b2c", fontWeight: 600, textDecoration: "underline", marginTop: "8px", display: "inline-block" }}>
-                      Invite members now →
-                    </Link>
-                  )}
+                  {isAdmin && <Link href={`/groups/${id}/add-members`} style={{ color: "#006b2c", fontWeight: 600, textDecoration: "underline", marginTop: "8px", display: "inline-block" }}>Invite members now →</Link>}
                 </div>
               ) : (
                 <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
@@ -207,8 +251,9 @@ export default function GroupDetailPage() {
                     <tr>
                       <th style={{ padding: "16px 24px" }}>Member</th>
                       <th style={{ padding: "16px 24px" }}>Role</th>
+                      {isRotatingAjo && <th style={{ padding: "16px 24px" }}>Position</th>}
                       <th style={{ padding: "16px 24px" }}>Contribution</th>
-                      <th style={{ padding: "16px 24px" }}>Joined</th>
+                      <th style={{ padding: "16px 24px" }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -217,26 +262,35 @@ export default function GroupDetailPage() {
                       const memberName = m.profiles?.full_name || `User ${m.user_id.slice(0, 6)}`;
                       return (
                         <tr key={m.user_id} style={{ borderBottom: "1px solid rgba(189, 202, 186, 0.2)", transition: "background-color 0.2s", cursor: "pointer" }}
-                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#eff4ff"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}>
+                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#eff4ff"; }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}>
                           <td style={{ padding: "16px 24px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                              <div style={{ width: "32px", height: "32px", borderRadius: "50%", backgroundColor: m.user_id === currentUserId ? "#00873a" : "#dae2fd", color: m.user_id === currentUserId ? "#f7fff2" : "#5c647a", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "12px" }}>
-                                {getInitials(memberName)}
-                              </div>
-                              <span style={{ fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif" }}>
-                                {memberName}
-                                {m.user_id === currentUserId && " (You)"}
-                              </span>
+                              <div style={{ width: "32px", height: "32px", borderRadius: "50%", backgroundColor: m.user_id === currentUserId ? "#00873a" : "#dae2fd", color: m.user_id === currentUserId ? "#f7fff2" : "#5c647a", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "12px" }}>{getInitials(memberName)}</div>
+                              <span style={{ fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif" }}>{memberName}{m.user_id === currentUserId && " (You)"}</span>
                             </div>
                           </td>
                           <td style={{ padding: "16px 24px" }}>
-                            <span style={{ padding: "4px 12px", borderRadius: "9999px", fontSize: "12px", fontWeight: 600, backgroundColor: m.role === "admin" ? "rgba(0, 107, 44, 0.1)" : "rgba(130, 81, 0, 0.1)", color: m.role === "admin" ? "#006b2c" : "#825100", textTransform: "capitalize", fontFamily: "'Geist', sans-serif" }}>
-                              {m.role}
-                            </span>
+                            <span style={{ padding: "4px 12px", borderRadius: "9999px", fontSize: "12px", fontWeight: 600, backgroundColor: m.role === "admin" ? "rgba(0, 107, 44, 0.1)" : "rgba(130, 81, 0, 0.1)", color: m.role === "admin" ? "#006b2c" : "#825100", textTransform: "capitalize", fontFamily: "'Geist', sans-serif" }}>{m.role}</span>
                           </td>
+                          {isRotatingAjo && (
+                            <td style={{ padding: "16px 24px", fontSize: "14px", fontWeight: 500 }}>
+                              #{m.rotation_position || "—"}
+                            </td>
+                          )}
                           <td style={{ padding: "16px 24px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif" }}>{contrib ? formatNaira(contrib.amount) : "—"}</td>
-                          <td style={{ padding: "16px 24px", fontSize: "14px", color: "#3e4a3d" }}>{formatDate(m.joined_at)}</td>
+                          <td style={{ padding: "16px 24px" }}>
+                            {isRotatingAjo ? (
+                              m.has_received_payout ? (
+                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#006b2c", fontFamily: "'Geist', sans-serif" }}>✅ Paid</span>
+                              ) : group.rotation_order?.[group.current_rotation_index] === m.user_id ? (
+                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#825100", fontFamily: "'Geist', sans-serif" }}>🎯 Current</span>
+                              ) : (
+                                <span style={{ fontSize: "12px", color: "#6e7b6c" }}>Waiting</span>
+                              )
+                            ) : (
+                              <span style={{ fontSize: "12px", color: "#6e7b6c" }}>—</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -251,9 +305,19 @@ export default function GroupDetailPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
           <div style={{ padding: "24px", borderRadius: "12px", backgroundColor: "#0b1c30", color: "#f8f9ff", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: "-40px", right: "-40px", width: "160px", height: "160px", backgroundColor: "rgba(0, 107, 44, 0.2)", borderRadius: "50%", filter: "blur(40px)" }} />
-            <p style={{ fontSize: "14px", opacity: 0.8, marginBottom: "8px", position: "relative", zIndex: 10 }}>Group Pool</p>
-            <h3 style={{ fontSize: "24px", fontWeight: 600, color: "#62df7d", marginBottom: "24px", position: "relative", zIndex: 10 }}>{formatNaira(group.pool_amount || 0)}</h3>
-            <Link href={`/payments?groupId=${group.id}&amount=${group.pool_amount || 50000}`} style={{ width: "100%", padding: "16px", backgroundColor: "#006b2c", color: "#ffffff", borderRadius: "8px", fontWeight: 500, fontSize: "14px", fontFamily: "'Geist', sans-serif", textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", position: "relative", zIndex: 10, boxSizing: "border-box" }}>
+            <p style={{ fontSize: "14px", opacity: 0.8, marginBottom: "4px", position: "relative", zIndex: 10 }}>
+              {isRotatingAjo ? "Contribution per member" : "Contribution per member"}
+            </p>
+            <h3 style={{ fontSize: "28px", fontWeight: 600, color: "#62df7d", marginBottom: isRotatingAjo ? "8px" : "16px", position: "relative", zIndex: 10 }}>{formatNaira(contributionAmount)}</h3>
+            {isRotatingAjo && (
+              <p style={{ fontSize: "13px", opacity: 0.7, marginBottom: "16px", position: "relative", zIndex: 10 }}>
+                Total pool per round: <strong style={{ color: "#ffddb8" }}>{formatNaira(totalPayout)}</strong>
+              </p>
+            )}
+            <Link
+              href={`/payments?groupId=${group.id}&amount=${contributionAmount}`}
+              style={{ width: "100%", padding: "16px", backgroundColor: "#006b2c", color: "#ffffff", borderRadius: "8px", fontWeight: 500, fontSize: "14px", fontFamily: "'Geist', sans-serif", textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", position: "relative", zIndex: 10, boxSizing: "border-box" }}
+            >
               <span className="material-symbols-outlined">bolt</span>
               Make Contribution
             </Link>
@@ -265,10 +329,10 @@ export default function GroupDetailPage() {
               <h4 style={{ fontSize: "14px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Group Info</h4>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "14px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Description</span><span style={{ fontWeight: 500, textAlign: "right", maxWidth: "60%" }}>{group.description || "—"}</span></div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Type</span><span style={{ fontWeight: 500, color: isRotatingAjo ? "#825100" : "#006b2c" }}>{isRotatingAjo ? "🔄 Rotating Ajo" : "Fixed Savings"}</span></div>
               <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Cycle</span><span style={{ fontWeight: 500 }}>#{group.cycle_number || 1}</span></div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Contribution</span><span style={{ fontWeight: 500, color: "#006b2c" }}>{formatNaira(contributionAmount)}</span></div>
               <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Created</span><span style={{ fontWeight: 500 }}>{formatDate(group.created_at)}</span></div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Status</span><span style={{ fontWeight: 500, color: group.status === "active" ? "#006b2c" : "#825100", textTransform: "capitalize" }}>{group.status || "active"}</span></div>
             </div>
           </div>
         </div>
