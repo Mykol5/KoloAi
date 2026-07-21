@@ -59,7 +59,6 @@ function TopNavBar() {
             fontSize: "14px",
             lineHeight: "20px",
             letterSpacing: "0.01em",
-            fontWeight: 500,
             fontFamily: "'Geist', sans-serif",
           }}
         >
@@ -523,7 +522,6 @@ function EvolutionSection() {
                 fontWeight: 700,
                 fontSize: "14px",
                 lineHeight: "20px",
-                letterSpacing: "0.01em",
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
               }}
@@ -1260,7 +1258,6 @@ function Footer() {
               fontWeight: 700,
               fontSize: "14px",
               lineHeight: "20px",
-              letterSpacing: "0.01em",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               color: "#0b1c30",
@@ -1307,7 +1304,6 @@ function Footer() {
               fontWeight: 700,
               fontSize: "14px",
               lineHeight: "20px",
-              letterSpacing: "0.01em",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               color: "#0b1c30",
@@ -1354,7 +1350,6 @@ function Footer() {
               fontWeight: 700,
               fontSize: "14px",
               lineHeight: "20px",
-              letterSpacing: "0.01em",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               color: "#0b1c30",

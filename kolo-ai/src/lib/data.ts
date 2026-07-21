@@ -19,7 +19,7 @@ export async function getDashboardData() {
   // Get total contributions
   const { data: contributions } = await supabase
     .from("contributions")
-    .select("amount, status")
+    .select("amount, status, created_at")
     .eq("user_id", user.id);
 
   // Get recent transactions

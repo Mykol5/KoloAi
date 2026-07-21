@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
@@ -9,6 +9,18 @@ import Link from "next/link";
 type PaymentStep = "select" | "details" | "processing" | "success";
 
 export default function PaymentsPage() {
+  return (
+    <Suspense fallback={<PaymentsPageFallback />}>
+      <PaymentsPageContent />
+    </Suspense>
+  );
+}
+
+function PaymentsPageFallback() {
+  return <div style={{ minHeight: "100vh", backgroundColor: "#f8f9ff" }} />;
+}
+
+function PaymentsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const supabase = createClient();
