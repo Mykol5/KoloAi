@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 
-export default function PaymentsPage() {
+function PaymentsContent() {
   const searchParams = useSearchParams();
   const supabase = createClient();
 
@@ -355,5 +355,13 @@ export default function PaymentsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function PaymentsPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <PaymentsContent />
+    </Suspense>
   );
 }
