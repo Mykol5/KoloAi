@@ -145,6 +145,8 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+
 Run Development Server
 bash
 yarn dev
@@ -176,6 +178,7 @@ kolo-ai/
       FloatingAI.tsx       # AI assistant button
     lib/                   # Utilities
       supabase/            # Supabase client
+
 
 Monnify Integration
 KoloAI uses Monnify's Customer Reserved Account API for payment processing:
