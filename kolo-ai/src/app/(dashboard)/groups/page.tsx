@@ -25,21 +25,15 @@ export default function GroupsPage() {
     setLoading(false);
   }, [supabase]);
 
-  // Initial fetch
-  useEffect(() => {
-    fetchGroups();
-  }, [fetchGroups]);
+  useEffect(() => { fetchGroups(); }, [fetchGroups]);
 
-  // 🔥 Refresh on tab focus and back navigation
   useEffect(() => {
     const handleFocus = () => fetchGroups();
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") fetchGroups();
     };
-
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
-
     return () => {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -70,25 +64,32 @@ export default function GroupsPage() {
    =========================== */
 function TopHeader() {
   return (
-    <header style={{ width: "100%", position: "sticky", top: 0, zIndex: 40, backgroundColor: "rgba(248, 249, 255, 0.7)", backdropFilter: "blur(12px)", borderBottom: "1px solid rgba(189, 202, 186, 0.3)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", marginBottom: "24px", marginLeft: "-24px", marginRight: "-24px", paddingLeft: "24px", paddingRight: "24px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", maxWidth: "1280px", margin: "0 auto", width: "100%" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+    <header className="groups-topbar" style={{ width: "100%", position: "sticky", top: 0, zIndex: 40, backgroundColor: "rgba(248, 249, 255, 0.7)", backdropFilter: "blur(12px)", borderBottom: "1px solid rgba(189, 202, 186, 0.3)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", marginBottom: "24px", marginLeft: "-24px", marginRight: "-24px", paddingLeft: "24px", paddingRight: "24px" }}>
+      <div className="topbar-inner" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", maxWidth: "1280px", margin: "0 auto", width: "100%", gap: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px", flexShrink: 0 }}>
           <nav style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", color: "#3e4a3d" }}>
             <span>Directory</span>
             <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>chevron_right</span>
             <span style={{ color: "#006b2c", fontWeight: 700 }}>Groups</span>
           </nav>
         </div>
-        <div style={{ flex: 1, maxWidth: "448px", margin: "0 64px", position: "relative" }}>
+        <div className="search-wrapper" style={{ flex: 1, maxWidth: "448px", margin: "0 64px", position: "relative" }}>
           <span className="material-symbols-outlined" style={{ position: "absolute", left: "16px", top: "50%", transform: "translateY(-50%)", color: "rgba(62, 74, 61, 0.6)" }}>search</span>
           <input type="text" placeholder="Search groups, circles, or funds..." style={{ width: "100%", padding: "8px 16px 8px 48px", backgroundColor: "#eff4ff", border: "none", borderRadius: "9999px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", outline: "none", boxSizing: "border-box" }} />
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px", flexShrink: 0 }}>
           <button style={{ width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", border: "none", cursor: "pointer", backgroundColor: "transparent", color: "#006b2c" }}>
             <span className="material-symbols-outlined">notifications</span>
           </button>
         </div>
       </div>
+      {/* Mobile responsive for top bar */}
+      <style jsx>{`
+        @media (max-width: 768px) {
+          .search-wrapper { display: none !important; }
+          .topbar-inner { padding: 10px 0 !important; }
+        }
+      `}</style>
     </header>
   );
 }
@@ -98,17 +99,24 @@ function TopHeader() {
    =========================== */
 function PageHeading() {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "40px", flexWrap: "wrap", gap: "24px" }}>
+    <div className="page-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "40px", flexWrap: "wrap", gap: "24px" }}>
       <div>
         <h2 style={{ fontSize: "24px", fontWeight: 600, fontFamily: "'Inter', sans-serif", color: "#0b1c30" }}>Savings Groups</h2>
         <p style={{ color: "#3e4a3d", marginTop: "8px" }}>Manage your active circles and explore new investment opportunities.</p>
       </div>
       <div style={{ display: "flex", gap: "8px" }}>
-        <Link href="/groups/create" style={{ padding: "10px 24px", backgroundColor: "#006b2c", color: "#ffffff", borderRadius: "9999px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", textDecoration: "none", display: "flex", alignItems: "center", gap: "8px" }}>
+        <Link href="/groups/create" className="create-btn" style={{ padding: "10px 24px", backgroundColor: "#006b2c", color: "#ffffff", borderRadius: "9999px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", textDecoration: "none", display: "flex", alignItems: "center", gap: "8px" }}>
           <span className="material-symbols-outlined" style={{ fontSize: "18px" }}>add</span>
           Create Group
         </Link>
       </div>
+      {/* Mobile responsive */}
+      <style jsx>{`
+        @media (max-width: 500px) {
+          .page-heading { flex-direction: column !important; align-items: flex-start !important; }
+          .create-btn { width: 100%; justify-content: center; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -119,42 +127,40 @@ function PageHeading() {
 function GroupsGrid({ groups, formatNaira }: { groups: any[]; formatNaira: (amount: number) => string }) {
   if (groups.length === 0) {
     return (
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px" }}>
-        <div style={{ gridColumn: "span 3", textAlign: "center", padding: "80px 24px", color: "#3e4a3d" }}>
-          <span className="material-symbols-outlined" style={{ fontSize: "64px", display: "block", marginBottom: "16px", color: "#bdcaba" }}>groups</span>
-          <h3 style={{ fontSize: "20px", fontWeight: 600, marginBottom: "8px", color: "#0b1c30" }}>No groups yet</h3>
-          <p style={{ fontSize: "14px", color: "#6e7b6c", marginBottom: "24px" }}>Create or join a savings group to get started on your wealth journey.</p>
-          <Link href="/groups/create" style={{ padding: "12px 32px", backgroundColor: "#006b2c", color: "#ffffff", borderRadius: "12px", fontWeight: 600, fontSize: "14px", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "8px", fontFamily: "'Geist', sans-serif" }}>
-            <span className="material-symbols-outlined">add</span>
-            Create Your First Group
-          </Link>
-        </div>
+      <div className="empty-state" style={{ textAlign: "center", padding: "80px 24px", color: "#3e4a3d" }}>
+        <span className="material-symbols-outlined" style={{ fontSize: "64px", display: "block", marginBottom: "16px", color: "#bdcaba" }}>groups</span>
+        <h3 style={{ fontSize: "20px", fontWeight: 600, marginBottom: "8px", color: "#0b1c30" }}>No groups yet</h3>
+        <p style={{ fontSize: "14px", color: "#6e7b6c", marginBottom: "24px" }}>Create or join a savings group to get started on your wealth journey.</p>
+        <Link href="/groups/create" style={{ padding: "12px 32px", backgroundColor: "#006b2c", color: "#ffffff", borderRadius: "12px", fontWeight: 600, fontSize: "14px", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "8px", fontFamily: "'Geist', sans-serif" }}>
+          <span className="material-symbols-outlined">add</span>
+          Create Your First Group
+        </Link>
       </div>
     );
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px" }}>
+    <div className="groups-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px" }}>
       {groups.map((group) => (
-        <Link key={group.id} href={`/groups/${group.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-          <div style={{ background: "rgba(255, 255, 255, 0.7)", backdropFilter: "blur(12px)", border: "1px solid rgba(226, 232, 240, 0.5)", boxShadow: "0 4px 20px rgba(15, 23, 42, 0.04)", borderRadius: "12px", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", cursor: "pointer", transition: "all 0.3s", height: "100%" }}
+        <Link key={group.id} href={`/groups/${group.id}`} className="group-card-link" style={{ textDecoration: "none", color: "inherit" }}>
+          <div className="group-card" style={{ background: "rgba(255, 255, 255, 0.7)", backdropFilter: "blur(12px)", border: "1px solid rgba(226, 232, 240, 0.5)", boxShadow: "0 4px 20px rgba(15, 23, 42, 0.04)", borderRadius: "12px", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", cursor: "pointer", transition: "all 0.3s", height: "100%" }}
             onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 20px 25px -5px rgba(0, 0, 0, 0.1)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 20px rgba(15, 23, 42, 0.04)"; }}>
             
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div className="card-top" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                <div style={{ width: "48px", height: "48px", borderRadius: "8px", backgroundColor: "rgba(0, 107, 44, 0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ width: "48px", height: "48px", borderRadius: "8px", backgroundColor: "rgba(0, 107, 44, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <span className="material-symbols-outlined" style={{ color: "#006b2c", fontSize: "28px" }}>account_balance</span>
                 </div>
-                <div>
-                  <h3 style={{ fontSize: "18px", fontWeight: 600, color: "#0b1c30" }}>{group.name}</h3>
+                <div style={{ minWidth: 0 }}>
+                  <h3 className="group-name" style={{ fontSize: "18px", fontWeight: 600, color: "#0b1c30", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.name}</h3>
                   <span style={{ fontSize: "12px", fontWeight: 600, fontFamily: "'Geist', sans-serif", color: "rgba(62, 74, 61, 0.7)", textTransform: "uppercase" }}>{group.description || "Savings Group"}</span>
                 </div>
               </div>
-              <span style={{ backgroundColor: "rgba(0, 107, 44, 0.1)", color: "#006b2c", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", fontWeight: 700, fontFamily: "'Geist', sans-serif", textTransform: "uppercase" }}>{group.status || "ACTIVE"}</span>
+              <span className="status-badge" style={{ backgroundColor: "rgba(0, 107, 44, 0.1)", color: "#006b2c", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", fontWeight: 700, fontFamily: "'Geist', sans-serif", textTransform: "uppercase", flexShrink: 0 }}>{group.status || "ACTIVE"}</span>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", padding: "16px 0", borderTop: "1px solid rgba(189, 202, 186, 0.2)", borderBottom: "1px solid rgba(189, 202, 186, 0.2)" }}>
+            <div className="card-stats" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", padding: "16px 0", borderTop: "1px solid rgba(189, 202, 186, 0.2)", borderBottom: "1px solid rgba(189, 202, 186, 0.2)" }}>
               <div>
                 <p style={{ fontSize: "12px", color: "#3e4a3d" }}>Members</p>
                 <p style={{ fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", color: "#0b1c30", display: "flex", alignItems: "center", gap: "8px" }}>
@@ -167,7 +173,7 @@ function GroupsGrid({ groups, formatNaira }: { groups: any[]; formatNaira: (amou
               </div>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div className="card-bottom" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: "12px", color: "#3e4a3d", marginBottom: "8px" }}>Cycle Progress</p>
                 <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
@@ -183,7 +189,7 @@ function GroupsGrid({ groups, formatNaira }: { groups: any[]; formatNaira: (amou
                   <span style={{ fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", color: "#0b1c30" }}>Cycle {group.cycle_number || 1}</span>
                 </div>
               </div>
-              <div style={{ width: "40px", height: "40px", borderRadius: "50%", backgroundColor: "#0b1c30", color: "#f8f9ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ width: "40px", height: "40px", borderRadius: "50%", backgroundColor: "#0b1c30", color: "#f8f9ff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <span className="material-symbols-outlined">arrow_forward</span>
               </div>
             </div>
@@ -192,7 +198,7 @@ function GroupsGrid({ groups, formatNaira }: { groups: any[]; formatNaira: (amou
       ))}
 
       {/* Create New Group */}
-      <Link href="/groups/create" style={{ border: "2px dashed rgba(189, 202, 186, 0.5)", borderRadius: "12px", padding: "24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "16px", minHeight: "250px", cursor: "pointer", textDecoration: "none", color: "inherit", transition: "all 0.2s" }}
+      <Link href="/groups/create" className="create-card" style={{ border: "2px dashed rgba(189, 202, 186, 0.5)", borderRadius: "12px", padding: "24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "16px", minHeight: "250px", cursor: "pointer", textDecoration: "none", color: "inherit", transition: "all 0.2s" }}
         onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(0, 107, 44, 0.5)"; e.currentTarget.style.backgroundColor = "rgba(0, 107, 44, 0.05)"; }}
         onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(189, 202, 186, 0.5)"; e.currentTarget.style.backgroundColor = "transparent"; }}>
         <div style={{ width: "64px", height: "64px", borderRadius: "50%", backgroundColor: "#dce9ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -203,9 +209,240 @@ function GroupsGrid({ groups, formatNaira }: { groups: any[]; formatNaira: (amou
           <p style={{ fontSize: "12px", fontFamily: "'Geist', sans-serif", color: "#3e4a3d", maxWidth: "200px", margin: "0 auto" }}>Start a private or public savings circle with custom rules.</p>
         </div>
       </Link>
+
+      {/* Mobile responsive styles for Grid */}
+      <style jsx>{`
+        @media (max-width: 1100px) {
+          .groups-grid { grid-template-columns: repeat(2, 1fr) !important; }
+        }
+        @media (max-width: 700px) {
+          .groups-grid { grid-template-columns: 1fr !important; }
+          .group-card { padding: 20px !important; }
+          .group-name { font-size: 16px !important; }
+          .card-stats { gap: 12px !important; }
+          .create-card { min-height: 200px !important; }
+        }
+        @media (max-width: 400px) {
+          .card-top { flex-direction: column !important; gap: 8px !important; }
+          .status-badge { align-self: flex-start !important; }
+          .card-bottom { flex-direction: column !important; gap: 12px !important; align-items: flex-start !important; }
+        }
+      `}</style>
     </div>
   );
 }
+
+
+
+
+// "use client";
+
+// import Link from "next/link";
+// import { useEffect, useState, useCallback } from "react";
+// import { createClient } from "@/lib/supabase/client";
+
+// export default function GroupsPage() {
+//   const [groups, setGroups] = useState<any[]>([]);
+//   const [loading, setLoading] = useState(true);
+//   const supabase = createClient();
+
+//   const fetchGroups = useCallback(async () => {
+//     const {
+//       data: { user },
+//     } = await supabase.auth.getUser();
+//     if (!user) return;
+
+//     const { data: memberships } = await supabase
+//       .from("group_members")
+//       .select("group_id, groups(*)")
+//       .eq("user_id", user.id);
+
+//     const userGroups = memberships?.map((m: any) => m.groups) || [];
+//     setGroups(userGroups);
+//     setLoading(false);
+//   }, [supabase]);
+
+//   // Initial fetch
+//   useEffect(() => {
+//     fetchGroups();
+//   }, [fetchGroups]);
+
+//   // 🔥 Refresh on tab focus and back navigation
+//   useEffect(() => {
+//     const handleFocus = () => fetchGroups();
+//     const handleVisibilityChange = () => {
+//       if (document.visibilityState === "visible") fetchGroups();
+//     };
+
+//     window.addEventListener("focus", handleFocus);
+//     document.addEventListener("visibilitychange", handleVisibilityChange);
+
+//     return () => {
+//       window.removeEventListener("focus", handleFocus);
+//       document.removeEventListener("visibilitychange", handleVisibilityChange);
+//     };
+//   }, [fetchGroups]);
+
+//   const formatNaira = (amount: number) => `₦${amount.toLocaleString("en-NG")}`;
+
+//   if (loading) {
+//     return (
+//       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontFamily: "'Inter', sans-serif", color: "#3e4a3d", fontSize: "16px" }}>
+//         Loading groups...
+//       </div>
+//     );
+//   }
+
+//   return (
+//     <>
+//       <TopHeader />
+//       <PageHeading />
+//       <GroupsGrid groups={groups} formatNaira={formatNaira} />
+//     </>
+//   );
+// }
+
+// /* ===========================
+//    TOP HEADER
+//    =========================== */
+// function TopHeader() {
+//   return (
+//     <header style={{ width: "100%", position: "sticky", top: 0, zIndex: 40, backgroundColor: "rgba(248, 249, 255, 0.7)", backdropFilter: "blur(12px)", borderBottom: "1px solid rgba(189, 202, 186, 0.3)", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", marginBottom: "24px", marginLeft: "-24px", marginRight: "-24px", paddingLeft: "24px", paddingRight: "24px" }}>
+//       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0", maxWidth: "1280px", margin: "0 auto", width: "100%" }}>
+//         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+//           <nav style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", color: "#3e4a3d" }}>
+//             <span>Directory</span>
+//             <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>chevron_right</span>
+//             <span style={{ color: "#006b2c", fontWeight: 700 }}>Groups</span>
+//           </nav>
+//         </div>
+//         <div style={{ flex: 1, maxWidth: "448px", margin: "0 64px", position: "relative" }}>
+//           <span className="material-symbols-outlined" style={{ position: "absolute", left: "16px", top: "50%", transform: "translateY(-50%)", color: "rgba(62, 74, 61, 0.6)" }}>search</span>
+//           <input type="text" placeholder="Search groups, circles, or funds..." style={{ width: "100%", padding: "8px 16px 8px 48px", backgroundColor: "#eff4ff", border: "none", borderRadius: "9999px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", outline: "none", boxSizing: "border-box" }} />
+//         </div>
+//         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+//           <button style={{ width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", border: "none", cursor: "pointer", backgroundColor: "transparent", color: "#006b2c" }}>
+//             <span className="material-symbols-outlined">notifications</span>
+//           </button>
+//         </div>
+//       </div>
+//     </header>
+//   );
+// }
+
+// /* ===========================
+//    PAGE HEADING
+//    =========================== */
+// function PageHeading() {
+//   return (
+//     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "40px", flexWrap: "wrap", gap: "24px" }}>
+//       <div>
+//         <h2 style={{ fontSize: "24px", fontWeight: 600, fontFamily: "'Inter', sans-serif", color: "#0b1c30" }}>Savings Groups</h2>
+//         <p style={{ color: "#3e4a3d", marginTop: "8px" }}>Manage your active circles and explore new investment opportunities.</p>
+//       </div>
+//       <div style={{ display: "flex", gap: "8px" }}>
+//         <Link href="/groups/create" style={{ padding: "10px 24px", backgroundColor: "#006b2c", color: "#ffffff", borderRadius: "9999px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", textDecoration: "none", display: "flex", alignItems: "center", gap: "8px" }}>
+//           <span className="material-symbols-outlined" style={{ fontSize: "18px" }}>add</span>
+//           Create Group
+//         </Link>
+//       </div>
+//     </div>
+//   );
+// }
+
+// /* ===========================
+//    GROUPS GRID
+//    =========================== */
+// function GroupsGrid({ groups, formatNaira }: { groups: any[]; formatNaira: (amount: number) => string }) {
+//   if (groups.length === 0) {
+//     return (
+//       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px" }}>
+//         <div style={{ gridColumn: "span 3", textAlign: "center", padding: "80px 24px", color: "#3e4a3d" }}>
+//           <span className="material-symbols-outlined" style={{ fontSize: "64px", display: "block", marginBottom: "16px", color: "#bdcaba" }}>groups</span>
+//           <h3 style={{ fontSize: "20px", fontWeight: 600, marginBottom: "8px", color: "#0b1c30" }}>No groups yet</h3>
+//           <p style={{ fontSize: "14px", color: "#6e7b6c", marginBottom: "24px" }}>Create or join a savings group to get started on your wealth journey.</p>
+//           <Link href="/groups/create" style={{ padding: "12px 32px", backgroundColor: "#006b2c", color: "#ffffff", borderRadius: "12px", fontWeight: 600, fontSize: "14px", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "8px", fontFamily: "'Geist', sans-serif" }}>
+//             <span className="material-symbols-outlined">add</span>
+//             Create Your First Group
+//           </Link>
+//         </div>
+//       </div>
+//     );
+//   }
+
+//   return (
+//     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px" }}>
+//       {groups.map((group) => (
+//         <Link key={group.id} href={`/groups/${group.id}`} style={{ textDecoration: "none", color: "inherit" }}>
+//           <div style={{ background: "rgba(255, 255, 255, 0.7)", backdropFilter: "blur(12px)", border: "1px solid rgba(226, 232, 240, 0.5)", boxShadow: "0 4px 20px rgba(15, 23, 42, 0.04)", borderRadius: "12px", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", cursor: "pointer", transition: "all 0.3s", height: "100%" }}
+//             onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 20px 25px -5px rgba(0, 0, 0, 0.1)"; }}
+//             onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 20px rgba(15, 23, 42, 0.04)"; }}>
+            
+//             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+//               <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+//                 <div style={{ width: "48px", height: "48px", borderRadius: "8px", backgroundColor: "rgba(0, 107, 44, 0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+//                   <span className="material-symbols-outlined" style={{ color: "#006b2c", fontSize: "28px" }}>account_balance</span>
+//                 </div>
+//                 <div>
+//                   <h3 style={{ fontSize: "18px", fontWeight: 600, color: "#0b1c30" }}>{group.name}</h3>
+//                   <span style={{ fontSize: "12px", fontWeight: 600, fontFamily: "'Geist', sans-serif", color: "rgba(62, 74, 61, 0.7)", textTransform: "uppercase" }}>{group.description || "Savings Group"}</span>
+//                 </div>
+//               </div>
+//               <span style={{ backgroundColor: "rgba(0, 107, 44, 0.1)", color: "#006b2c", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", fontWeight: 700, fontFamily: "'Geist', sans-serif", textTransform: "uppercase" }}>{group.status || "ACTIVE"}</span>
+//             </div>
+
+//             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", padding: "16px 0", borderTop: "1px solid rgba(189, 202, 186, 0.2)", borderBottom: "1px solid rgba(189, 202, 186, 0.2)" }}>
+//               <div>
+//                 <p style={{ fontSize: "12px", color: "#3e4a3d" }}>Members</p>
+//                 <p style={{ fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", color: "#0b1c30", display: "flex", alignItems: "center", gap: "8px" }}>
+//                   <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>groups</span> {group.member_count || 0} / {group.max_members || 20}
+//                 </p>
+//               </div>
+//               <div>
+//                 <p style={{ fontSize: "12px", color: "#3e4a3d" }}>Pool Value</p>
+//                 <p style={{ fontSize: "14px", fontWeight: 700, fontFamily: "'Geist', sans-serif", color: "#006b2c" }}>{formatNaira(group.pool_amount || 0)}</p>
+//               </div>
+//             </div>
+
+//             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+//               <div style={{ flex: 1 }}>
+//                 <p style={{ fontSize: "12px", color: "#3e4a3d", marginBottom: "8px" }}>Cycle Progress</p>
+//                 <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+//                   <div style={{ position: "relative", width: "48px", height: "48px" }}>
+//                     <svg width="48" height="48">
+//                       <circle cx="24" cy="24" r="20" fill="transparent" stroke="#dce9ff" strokeWidth="4" />
+//                       <circle cx="24" cy="24" r="20" fill="transparent" stroke="#006b2c" strokeWidth="4" strokeDasharray="125.6" strokeDashoffset={125.6 - (125.6 * ((group.member_count || 0) / (group.max_members || 20))) / 100 * 100} strokeLinecap="round" transform="rotate(-90 24 24)" />
+//                     </svg>
+//                     <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700, color: "#0b1c30" }}>
+//                       {Math.round(((group.member_count || 0) / (group.max_members || 20)) * 100)}%
+//                     </span>
+//                   </div>
+//                   <span style={{ fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", color: "#0b1c30" }}>Cycle {group.cycle_number || 1}</span>
+//                 </div>
+//               </div>
+//               <div style={{ width: "40px", height: "40px", borderRadius: "50%", backgroundColor: "#0b1c30", color: "#f8f9ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+//                 <span className="material-symbols-outlined">arrow_forward</span>
+//               </div>
+//             </div>
+//           </div>
+//         </Link>
+//       ))}
+
+//       {/* Create New Group */}
+//       <Link href="/groups/create" style={{ border: "2px dashed rgba(189, 202, 186, 0.5)", borderRadius: "12px", padding: "24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "16px", minHeight: "250px", cursor: "pointer", textDecoration: "none", color: "inherit", transition: "all 0.2s" }}
+//         onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(0, 107, 44, 0.5)"; e.currentTarget.style.backgroundColor = "rgba(0, 107, 44, 0.05)"; }}
+//         onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(189, 202, 186, 0.5)"; e.currentTarget.style.backgroundColor = "transparent"; }}>
+//         <div style={{ width: "64px", height: "64px", borderRadius: "50%", backgroundColor: "#dce9ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+//           <span className="material-symbols-outlined" style={{ color: "#006b2c", fontSize: "32px" }}>add</span>
+//         </div>
+//         <div style={{ textAlign: "center" }}>
+//           <h3 style={{ fontSize: "24px", fontWeight: 600, fontFamily: "'Inter', sans-serif", color: "#0b1c30" }}>Create New Group</h3>
+//           <p style={{ fontSize: "12px", fontFamily: "'Geist', sans-serif", color: "#3e4a3d", maxWidth: "200px", margin: "0 auto" }}>Start a private or public savings circle with custom rules.</p>
+//         </div>
+//       </Link>
+//     </div>
+//   );
+// }
 
 
 // "use client";
