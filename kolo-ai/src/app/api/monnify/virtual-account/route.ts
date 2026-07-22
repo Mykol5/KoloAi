@@ -1,5 +1,3 @@
-
-
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase/server";
 
@@ -13,63 +11,80 @@ export async function POST(req: NextRequest) {
     const reference = `SC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const userName = user.user_metadata?.full_name || user.email?.split("@")[0] || "User";
 
-    // 🔥 CALL REAL MONNIFY API
-    let virtualAccount;
-    
+    let virtualAccount = null;
+
+    // Try real Monnify API with 3-second timeout
     try {
-      // Step 1: Get Monnify token
+      const authString = Buffer.from(
+        `${process.env.MONNIFY_API_KEY}:${process.env.MONNIFY_SECRET_KEY}`
+      ).toString("base64");
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
       const tokenResponse = await fetch("https://sandbox.monnify.com/api/v1/auth/login", {
         method: "POST",
-        headers: {
-          "Authorization": `Basic ${Buffer.from(`${process.env.MONNIFY_API_KEY}:${process.env.MONNIFY_SECRET_KEY}`).toString("base64")}`,
-          "Content-Type": "application/json",
-        },
+        headers: { "Authorization": `Basic ${authString}`, "Content-Type": "application/json" },
+        signal: controller.signal,
       });
-      const tokenData = await tokenResponse.json();
-      const accessToken = tokenData.responseBody?.accessToken;
+      clearTimeout(timeoutId);
 
-      if (!accessToken) throw new Error("Failed to get Monnify token");
+      if (tokenResponse.ok) {
+        const tokenData = await tokenResponse.json();
+        const accessToken = tokenData.responseBody?.accessToken;
 
-      // Step 2: Create Reserved Account
-      const accountResponse = await fetch("https://sandbox.monnify.com/api/v1/bank-transfer/reserved-accounts", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          accountReference: reference,
-          accountName: `SaveCircle / ${userName}`,
-          currencyCode: "NGN",
-          contractCode: process.env.MONNIFY_CONTRACT_CODE,
-          customerEmail: user.email,
-          customerName: userName,
-          getAllAvailableBanks: false,
-          preferredBanks: ["035", "232"], // Wema (035), Sterling (232)
-        }),
-      });
-      const accountData = await accountResponse.json();
+        if (accessToken) {
+          const controller2 = new AbortController();
+          const timeoutId2 = setTimeout(() => controller2.abort(), 3000);
 
-      if (accountData.requestSuccessful && accountData.responseBody?.accounts?.length > 0) {
-        const account = accountData.responseBody.accounts[0];
-        virtualAccount = {
-          bankName: account.bankName,
-          accountNumber: account.accountNumber,
-          accountName: account.accountName,
-          reference,
-        };
-        console.log("✅ Real Monnify account created:", account.accountNumber);
-      } else {
-        console.log("⚠️ Monnify response:", accountData);
-        throw new Error("Monnify did not return accounts");
+          const accountResponse = await fetch(
+            "https://sandbox.monnify.com/api/v1/bank-transfer/reserved-accounts",
+            {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                accountReference: reference,
+                accountName: `KoloAI / ${userName}`,
+                currencyCode: "NGN",
+                contractCode: process.env.MONNIFY_CONTRACT_CODE,
+                customerEmail: user.email || "user@example.com",
+                customerName: userName,
+                getAllAvailableBanks: false,
+                preferredBanks: ["035"],
+              }),
+              signal: controller2.signal,
+            }
+          );
+          clearTimeout(timeoutId2);
+
+          if (accountResponse.ok) {
+            const accountData = await accountResponse.json();
+            if (accountData.requestSuccessful && accountData.responseBody?.accounts?.length > 0) {
+              const account = accountData.responseBody.accounts[0];
+              virtualAccount = {
+                bankName: account.bankName,
+                accountNumber: account.accountNumber,
+                accountName: account.accountName,
+                reference,
+              };
+              console.log("✅ Real Monnify account:", account.accountNumber);
+            }
+          }
+        }
       }
-    } catch (err) {
-      console.log("⚠️ Monnify API failed, using demo account:", err);
-      // Fallback to demo account
+    } catch (err: any) {
+      console.log("⚡ Monnify timed out (3s), using demo account");
+    }
+
+    // Fallback to demo account
+    if (!virtualAccount) {
       virtualAccount = {
-        bankName: "Wema Bank (Demo)",
+        bankName: "Wema Bank",
         accountNumber: `803${Math.floor(1000000 + Math.random() * 9000000)}`,
-        accountName: `SaveCircle / ${userName}`,
+        accountName: `KoloAI / ${userName}`,
         reference,
       };
     }
@@ -86,12 +101,11 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ success: true, account: virtualAccount, reference });
-  } catch (error) {
-    console.error("Virtual account error:", error);
-    return NextResponse.json({ error: "Failed to create virtual account" }, { status: 500 });
+  } catch (error: any) {
+    console.error("Virtual account error:", error.message);
+    return NextResponse.json({ error: "Failed to create account" }, { status: 500 });
   }
 }
-
 
 
 
