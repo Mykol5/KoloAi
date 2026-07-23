@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     //   const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL}/join?group=${groupId}&email=${encodeURIComponent(email)}&role=${role}`;
       
       const { data, error } = await resend.emails.send({
-        from: "Kolo AI <onboarding@resend.dev>", // Use your verified domain in production
+        from: "KoloAI <noreply@kidsstudiocode.com.ng>", // Use your verified domain in production
         to: [email],
         subject: `${inviterName} invited you to join ${groupName} on Kolo AI`,
         html: `
