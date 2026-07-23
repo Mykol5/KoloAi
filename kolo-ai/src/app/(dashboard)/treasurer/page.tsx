@@ -24,14 +24,25 @@ export default function TreasurerAIPage() {
       if (user) {
         setUserName(user.user_metadata?.full_name || user.email?.split("@")[0] || "there");
 
-        const { data: memberships } = await supabase
+        const { data: membership } = await supabase
           .from("group_members")
-          .select("group_id, groups(*)")
+          .select("group_id")
           .eq("user_id", user.id)
-          .limit(1);
+          .limit(1)
+          .single();
 
-        if (memberships && memberships.length > 0) {
-          const group = memberships[0].groups;
+        if (membership) {
+          const { data: group } = await supabase
+            .from("groups")
+            .select("*")
+            .eq("id", membership.group_id)
+            .single();
+
+          if (!group) {
+            setLoading(false);
+            return;
+          }
+
           const { data: contribData } = await supabase
             .from("contributions")
             .select("id, amount, status")
