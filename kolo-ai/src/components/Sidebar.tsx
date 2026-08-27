@@ -48,6 +48,8 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   const baseNavItems = [
     { icon: "dashboard", label: "Dashboard", href: "/dashboard" },
+    { icon: "track_changes", label: "Goals", href: "/goals" },
+    { icon: "psychology", label: "Ask Kolo", href: "/ask-kolo" },
     { icon: "groups", label: "My Groups", href: "/groups" },
     { icon: "account_balance_wallet", label: "Payments", href: "/payments" },
   ];
@@ -65,6 +67,8 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   // Mobile bottom nav — includes Treasurer AI for admins
   const mobileNavItems = [
     { icon: "dashboard", label: "Home", href: "/dashboard" },
+    { icon: "track_changes", label: "Goals", href: "/goals" },
+    { icon: "psychology", label: "Ask Kolo", href: "/ask-kolo" },
     { icon: "groups", label: "Groups", href: "/groups" },
     ...(isAdmin ? [{ icon: "psychology", label: "AI", href: "/treasurer" }] : []),
     { icon: "account_balance_wallet", label: "Pay", href: "/payments" },
