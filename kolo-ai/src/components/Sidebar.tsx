@@ -51,6 +51,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     { icon: "track_changes", label: "Goals", href: "/goals" },
     { icon: "psychology", label: "Ask Kolo", href: "/ask-kolo" },
     { icon: "groups", label: "My Groups", href: "/groups" },
+    { icon: "verified_user", label: "Verification", href: "/verification" },
     { icon: "account_balance_wallet", label: "Payments", href: "/payments" },
   ];
 
@@ -70,6 +71,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     { icon: "track_changes", label: "Goals", href: "/goals" },
     { icon: "psychology", label: "Ask Kolo", href: "/ask-kolo" },
     { icon: "groups", label: "Groups", href: "/groups" },
+    { icon: "verified_user", label: "Verification", href: "/verification" },
     ...(isAdmin ? [{ icon: "psychology", label: "AI", href: "/treasurer" }] : []),
     { icon: "account_balance_wallet", label: "Pay", href: "/payments" },
     { icon: "settings", label: "Settings", href: "/settings" },
