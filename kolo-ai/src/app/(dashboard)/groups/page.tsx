@@ -15,8 +15,8 @@ import { createClient } from "@/lib/supabase/client";
 ========================================================= */
 
 type Group = {
-  verification_status: string;
-  verified_at(verified_at: any): boolean;
+  verification_status?: string | null;
+  verified_at?: string | null;
   id: string;
   name: string;
   description?: string | null;
