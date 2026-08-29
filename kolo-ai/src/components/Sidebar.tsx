@@ -21,57 +21,118 @@ export default function Sidebar({
   const [userName, setUserName] = useState("User");
   const [userEmail, setUserEmail] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [checkingRole, setCheckingRole] = useState(true);
+
+  /* =========================================================
+     LOAD USER
+  ========================================================= */
 
   useEffect(() => {
+    let mounted = true;
+
     async function fetchUser() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
 
-      if (!user) return;
+        if (!user) {
+          if (mounted) {
+            setCheckingRole(false);
+          }
 
-      const name =
-        user.user_metadata?.full_name ||
-        user.email?.split("@")[0] ||
-        "User";
+          return;
+        }
 
-      setUserName(name);
-      setUserEmail(user.email || "");
+        const name =
+          user.user_metadata?.full_name ||
+          user.email?.split("@")[0] ||
+          "User";
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", user.id)
-        .maybeSingle();
+        if (mounted) {
+          setUserName(name);
+          setUserEmail(user.email || "");
+        }
 
-      if (profile?.full_name) {
-        setUserName(profile.full_name);
+        /* -----------------------------------------------------
+           PROFILE NAME
+        ----------------------------------------------------- */
+
+        const { data: profile } =
+          await supabase
+            .from("profiles")
+            .select("full_name")
+            .eq("id", user.id)
+            .maybeSingle();
+
+        if (
+          mounted &&
+          profile?.full_name
+        ) {
+          setUserName(
+            profile.full_name
+          );
+        }
+
+        /* -----------------------------------------------------
+           ADMIN CHECK
+        ----------------------------------------------------- */
+
+        const {
+          data: adminGroups,
+          error: adminError,
+        } = await supabase
+          .from("group_members")
+          .select("id, role")
+          .eq("user_id", user.id)
+          .in("role", [
+            "admin",
+            "administrator",
+            "owner",
+            "treasurer",
+          ]);
+
+        if (mounted) {
+          if (adminError) {
+            console.error(
+              "Unable to check administrator role:",
+              adminError
+            );
+
+            setIsAdmin(false);
+          } else {
+            setIsAdmin(
+              Boolean(
+                adminGroups &&
+                  adminGroups.length > 0
+              )
+            );
+          }
+
+          setCheckingRole(false);
+        }
+      } catch (error) {
+        console.error(
+          "Sidebar user loading error:",
+          error
+        );
+
+        if (mounted) {
+          setCheckingRole(false);
+        }
       }
-
-      /*
-       * ADMIN ACCESS
-       *
-       * Only users who are administrators of
-       * at least one group get the admin controls.
-       */
-      const { data: adminGroups } = await supabase
-        .from("group_members")
-        .select("id")
-        .eq("user_id", user.id)
-        .in("role", [
-          "admin",
-          "administrator",
-          "owner",
-        ]);
-
-      setIsAdmin(
-        !!adminGroups &&
-          adminGroups.length > 0
-      );
     }
 
     fetchUser();
+
+    return () => {
+      mounted = false;
+    };
   }, [supabase]);
+
+  /* =========================================================
+     SIGN OUT
+  ========================================================= */
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -80,7 +141,13 @@ export default function Sidebar({
     router.refresh();
   };
 
-  const getInitials = (name: string) =>
+  /* =========================================================
+     INITIALS
+  ========================================================= */
+
+  const getInitials = (
+    name: string
+  ) =>
     name
       ?.split(" ")
       .map((n) => n[0])
@@ -88,9 +155,10 @@ export default function Sidebar({
       .toUpperCase()
       .slice(0, 2) || "U";
 
-  /*
-   * NORMAL USER NAVIGATION
-   */
+  /* =========================================================
+     NORMAL MEMBER NAVIGATION
+  ========================================================= */
+
   const baseNavItems = [
     {
       icon: "dashboard",
@@ -98,24 +166,19 @@ export default function Sidebar({
       href: "/dashboard",
     },
     {
-      icon: "track_changes",
-      label: "Goals",
-      href: "/goals",
-    },
-    {
       icon: "psychology",
       label: "Ask Kolo",
       href: "/ask-kolo",
     },
     {
+      icon: "track_changes",
+      label: "Goals",
+      href: "/goals",
+    },
+    {
       icon: "groups",
       label: "My Groups",
       href: "/groups",
-    },
-    {
-      icon: "verified_user",
-      label: "Verification",
-      href: "/verification",
     },
     {
       icon: "account_balance_wallet",
@@ -124,16 +187,10 @@ export default function Sidebar({
     },
   ];
 
-  /*
-   * ADMIN / TREASURER NAVIGATION
-   *
-   * Payment Review contains:
-   * - member payment review
-   * - payment proof inspection
-   * - confirm / reject
-   * - payout control
-   * - payout history
-   */
+  /* =========================================================
+     ADMIN NAVIGATION
+  ========================================================= */
+
   const adminNavItems = [
     {
       icon: "psychology",
@@ -147,6 +204,10 @@ export default function Sidebar({
     },
   ];
 
+  /* =========================================================
+     SETTINGS
+  ========================================================= */
+
   const bottomNavItems = [
     {
       icon: "settings",
@@ -155,17 +216,22 @@ export default function Sidebar({
     },
   ];
 
+  /* =========================================================
+     COMPLETE DESKTOP NAV
+  ========================================================= */
+
   const navItems = [
     ...baseNavItems,
-    ...(isAdmin ? adminNavItems : []),
+    ...(isAdmin
+      ? adminNavItems
+      : []),
     ...bottomNavItems,
   ];
 
-  /*
-   * MOBILE NAVIGATION
-   *
-   * Payment Review is available to admins here too.
-   */
+  /* =========================================================
+     MOBILE NAV
+  ========================================================= */
+
   const mobileNavItems = [
     {
       icon: "dashboard",
@@ -173,14 +239,14 @@ export default function Sidebar({
       href: "/dashboard",
     },
     {
-      icon: "track_changes",
-      label: "Goals",
-      href: "/goals",
-    },
-    {
       icon: "psychology",
       label: "Ask Kolo",
       href: "/ask-kolo",
+    },
+    {
+      icon: "track_changes",
+      label: "Goals",
+      href: "/goals",
     },
     {
       icon: "groups",
@@ -188,18 +254,13 @@ export default function Sidebar({
       href: "/groups",
     },
     {
-      icon: "verified_user",
-      label: "Verification",
-      href: "/verification",
+      icon: "account_balance_wallet",
+      label: "Pay",
+      href: "/payments",
     },
 
     ...(isAdmin
       ? [
-          {
-            icon: "psychology",
-            label: "AI",
-            href: "/treasurer",
-          },
           {
             icon: "fact_check",
             label: "Review",
@@ -207,12 +268,6 @@ export default function Sidebar({
           },
         ]
       : []),
-
-    {
-      icon: "account_balance_wallet",
-      label: "Pay",
-      href: "/payments",
-    },
 
     {
       icon: "settings",
@@ -233,41 +288,59 @@ export default function Sidebar({
           position: "fixed",
           left: 0,
           top: 0,
+
           height: "100vh",
+
           width: collapsed
             ? "80px"
             : "280px",
-          backgroundColor: "#213145",
+
+          backgroundColor:
+            "#213145",
+
           display: "flex",
           flexDirection: "column",
+
           padding: collapsed
             ? "24px 12px"
             : "24px 16px",
+
           gap: "8px",
+
           zIndex: 50,
+
           boxShadow:
             "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+
           transition:
             "width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+
           overflow: "hidden",
         }}
       >
-        {/* =====================================================
-            LOGO + TOGGLE
-        ===================================================== */}
+        {/* ===================================================
+            LOGO
+        =================================================== */}
 
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: collapsed
-              ? "center"
-              : "space-between",
+
+            justifyContent:
+              collapsed
+                ? "center"
+                : "space-between",
+
             padding: collapsed
               ? "0"
               : "0 16px",
-            marginBottom: "40px",
+
+            marginBottom: "24px",
+
             minHeight: "48px",
+
+            flexShrink: 0,
           }}
         >
           {!collapsed && (
@@ -279,7 +352,9 @@ export default function Sidebar({
                   fontFamily:
                     "'Inter', sans-serif",
                   color: "#ffffff",
-                  whiteSpace: "nowrap",
+                  whiteSpace:
+                    "nowrap",
+                  margin: 0,
                 }}
               >
                 Kolo AI
@@ -293,7 +368,9 @@ export default function Sidebar({
                     "'Geist', sans-serif",
                   color:
                     "rgba(211, 228, 254, 0.7)",
-                  whiteSpace: "nowrap",
+                  whiteSpace:
+                    "nowrap",
+                  margin: 0,
                 }}
               >
                 {isAdmin
@@ -308,12 +385,17 @@ export default function Sidebar({
               style={{
                 width: "40px",
                 height: "40px",
+
                 backgroundColor:
                   "#006b2c",
-                borderRadius: "12px",
+
+                borderRadius:
+                  "12px",
+
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
+                justifyContent:
+                  "center",
               }}
             >
               <span
@@ -331,24 +413,41 @@ export default function Sidebar({
 
           <button
             onClick={onToggle}
+            aria-label={
+              collapsed
+                ? "Expand sidebar"
+                : "Collapse sidebar"
+            }
             style={{
               width: "32px",
               height: "32px",
-              borderRadius: "8px",
+
+              borderRadius:
+                "8px",
+
               backgroundColor:
                 "rgba(211, 228, 254, 0.1)",
+
               border: "none",
+
               cursor: "pointer",
+
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
+              justifyContent:
+                "center",
+
               color: "#d3e4fe",
+
               transition:
                 "background-color 0.2s",
+
               flexShrink: 0,
-              marginLeft: collapsed
-                ? 0
-                : "8px",
+
+              marginLeft:
+                collapsed
+                  ? 0
+                  : "8px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.backgroundColor =
@@ -363,11 +462,14 @@ export default function Sidebar({
               className="material-symbols-outlined"
               style={{
                 fontSize: "20px",
+
                 transition:
                   "transform 0.3s",
-                transform: collapsed
-                  ? "rotate(180deg)"
-                  : "rotate(0deg)",
+
+                transform:
+                  collapsed
+                    ? "rotate(180deg)"
+                    : "rotate(0deg)",
               }}
             >
               {collapsed
@@ -377,166 +479,276 @@ export default function Sidebar({
           </button>
         </div>
 
-        {/* =====================================================
-            NAVIGATION
-        ===================================================== */}
+        {/* ===================================================
+            SCROLLABLE NAVIGATION
+        =================================================== */}
 
         <nav
+          className="sidebar-navigation"
           style={{
             flex: 1,
+
+            /*
+             * CRITICAL:
+             * Allows this flex child to shrink.
+             */
+            minHeight: 0,
+
             display: "flex",
-            flexDirection: "column",
+            flexDirection:
+              "column",
+
             gap: "4px",
+
+            /*
+             * CRITICAL:
+             * Navigation scrolls instead of pushing
+             * the profile/logout section off-screen.
+             */
+            overflowY: "auto",
+            overflowX: "hidden",
+
+            paddingBottom:
+              "12px",
+
+            scrollbarWidth:
+              "thin",
+
+            scrollbarColor:
+              "rgba(211, 228, 254, 0.2) transparent",
           }}
         >
-          {navItems.map((item) => {
-            const isActive =
-              pathname === item.href ||
-              pathname.startsWith(
-                item.href + "/"
-              );
+          {navItems.map(
+            (item) => {
+              const isActive =
+                pathname ===
+                  item.href ||
+                pathname.startsWith(
+                  item.href + "/"
+                );
 
-            return (
-              <Link
-                key={item.label}
-                href={item.href}
-                title={
-                  collapsed
-                    ? item.label
-                    : undefined
-                }
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: collapsed
-                    ? "0"
-                    : "16px",
-                  justifyContent:
+              return (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  title={
                     collapsed
-                      ? "center"
-                      : "flex-start",
-                  padding: collapsed
-                    ? "12px"
-                    : "12px 24px",
-                  borderRadius: "8px",
-                  fontWeight: isActive
-                    ? 700
-                    : 400,
-                  transition:
-                    "all 0.2s",
-                  textDecoration:
-                    "none",
-                  backgroundColor:
-                    isActive
-                      ? "#00873a"
-                      : "transparent",
-                  color: isActive
-                    ? "#f7fff2"
-                    : "#d3e4fe",
-                  transform: isActive
-                    ? "translateX(4px)"
-                    : "none",
-                  whiteSpace:
-                    "nowrap",
-                  overflow:
-                    "hidden",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.backgroundColor =
-                      "rgba(63, 70, 92, 0.5)";
-                    e.currentTarget.style.color =
-                      "#eaf1ff";
+                      ? item.label
+                      : undefined
                   }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.backgroundColor =
-                      "transparent";
-                    e.currentTarget.style.color =
-                      "#d3e4fe";
-                  }
-                }}
-              >
-                <span
-                  className="material-symbols-outlined"
                   style={{
-                    fontSize: "22px",
+                    display: "flex",
+
+                    alignItems:
+                      "center",
+
+                    gap: collapsed
+                      ? "0"
+                      : "16px",
+
+                    justifyContent:
+                      collapsed
+                        ? "center"
+                        : "flex-start",
+
+                    padding:
+                      collapsed
+                        ? "12px"
+                        : "12px 24px",
+
+                    minHeight:
+                      "46px",
+
+                    borderRadius:
+                      "8px",
+
+                    fontWeight:
+                      isActive
+                        ? 700
+                        : 400,
+
+                    transition:
+                      "all 0.2s",
+
+                    textDecoration:
+                      "none",
+
+                    backgroundColor:
+                      isActive
+                        ? "#00873a"
+                        : "transparent",
+
+                    color:
+                      isActive
+                        ? "#f7fff2"
+                        : "#d3e4fe",
+
+                    transform:
+                      isActive
+                        ? "translateX(4px)"
+                        : "none",
+
+                    whiteSpace:
+                      "nowrap",
+
+                    overflow:
+                      "hidden",
+
                     flexShrink: 0,
                   }}
-                >
-                  {item.icon}
-                </span>
+                  onMouseEnter={(
+                    e
+                  ) => {
+                    if (
+                      !isActive
+                    ) {
+                      e.currentTarget.style.backgroundColor =
+                        "rgba(63, 70, 92, 0.5)";
 
-                {!collapsed && (
+                      e.currentTarget.style.color =
+                        "#eaf1ff";
+                    }
+                  }}
+                  onMouseLeave={(
+                    e
+                  ) => {
+                    if (
+                      !isActive
+                    ) {
+                      e.currentTarget.style.backgroundColor =
+                        "transparent";
+
+                      e.currentTarget.style.color =
+                        "#d3e4fe";
+                    }
+                  }}
+                >
                   <span
+                    className="material-symbols-outlined"
                     style={{
-                      fontSize: "14px",
-                      fontWeight: 500,
-                      fontFamily:
-                        "'Geist', sans-serif",
+                      fontSize:
+                        "22px",
+                      flexShrink: 0,
                     }}
                   >
-                    {item.label}
+                    {item.icon}
                   </span>
-                )}
-              </Link>
-            );
-          })}
+
+                  {!collapsed && (
+                    <span
+                      style={{
+                        fontSize:
+                          "14px",
+
+                        fontWeight: 500,
+
+                        fontFamily:
+                          "'Geist', sans-serif",
+                      }}
+                    >
+                      {item.label}
+                    </span>
+                  )}
+                </Link>
+              );
+            }
+          )}
         </nav>
 
-        {/* =====================================================
-            BOTTOM SECTION
-        ===================================================== */}
+        {/* ===================================================
+            FIXED BOTTOM SECTION
+        =================================================== */}
 
         <div
+          className="sidebar-bottom"
           style={{
+            /*
+             * CRITICAL:
+             * Never allow this section to shrink.
+             */
+            flexShrink: 0,
+
             marginTop: "auto",
-            padding: collapsed
-              ? "0"
-              : "0 16px",
-            paddingTop: "24px",
+
+            padding:
+              collapsed
+                ? "0"
+                : "0 16px",
+
+            paddingTop:
+              "14px",
+
+            paddingBottom:
+              "4px",
+
             borderTop:
               "1px solid rgba(211, 228, 254, 0.1)",
+
             display: "flex",
-            flexDirection: "column",
-            alignItems: collapsed
-              ? "center"
-              : "stretch",
+
+            flexDirection:
+              "column",
+
+            alignItems:
+              collapsed
+                ? "center"
+                : "stretch",
+
+            backgroundColor:
+              "#213145",
           }}
         >
+          {/* =================================================
+              NEW GROUP — ADMIN ONLY
+          ================================================= */}
+
           {!collapsed ? (
             <>
-              {/* =================================================
-                  NEW GROUP
-                  ONLY ADMINS SEE THIS
-              ================================================= */}
-
               {isAdmin && (
                 <Link
                   href="/groups/create"
                   style={{
                     width: "100%",
+
                     backgroundColor:
                       "#006b2c",
+
                     color: "#ffffff",
-                    padding: "16px",
-                    borderRadius: "12px",
+
+                    padding:
+                      "13px 16px",
+
+                    borderRadius:
+                      "12px",
+
                     fontWeight: 700,
+
                     display: "flex",
-                    alignItems: "center",
+
+                    alignItems:
+                      "center",
+
                     justifyContent:
                       "center",
+
                     gap: "8px",
-                    fontSize: "14px",
+
+                    fontSize:
+                      "14px",
+
                     fontFamily:
                       "'Geist', sans-serif",
+
                     textDecoration:
                       "none",
+
                     transition:
                       "all 0.2s",
+
                     boxSizing:
                       "border-box",
+
+                    flexShrink: 0,
                   }}
                 >
                   <span className="material-symbols-outlined">
@@ -547,35 +759,65 @@ export default function Sidebar({
                 </Link>
               )}
 
-              {/* USER */}
+              {/* =================================================
+                  PROFILE + LOGOUT
+              ================================================= */}
+
               <div
                 style={{
-                  marginTop: "24px",
+                  marginTop:
+                    isAdmin
+                      ? "12px"
+                      : "0",
+
                   display: "flex",
-                  alignItems: "center",
-                  gap: "16px",
+
+                  alignItems:
+                    "center",
+
+                  gap: "12px",
+
                   padding: "8px",
+
                   backgroundColor:
                     "rgba(211, 228, 254, 0.05)",
-                  borderRadius: "8px",
+
+                  borderRadius:
+                    "8px",
+
+                  minHeight:
+                    "56px",
+
+                  flexShrink: 0,
                 }}
               >
                 <div
                   style={{
                     width: "40px",
                     height: "40px",
-                    borderRadius: "50%",
+
+                    borderRadius:
+                      "50%",
+
                     backgroundColor:
                       "#00873a",
+
                     color:
                       "#f7fff2",
+
                     display: "flex",
+
                     alignItems:
                       "center",
+
                     justifyContent:
                       "center",
+
                     fontWeight: 700,
-                    fontSize: "14px",
+
+                    fontSize:
+                      "14px",
+
                     flexShrink: 0,
                   }}
                 >
@@ -588,24 +830,35 @@ export default function Sidebar({
                   style={{
                     overflow:
                       "hidden",
+
                     flex: 1,
+
+                    minWidth: 0,
                   }}
                 >
                   <p
                     style={{
                       fontSize:
                         "14px",
-                      fontWeight: 500,
+
+                      fontWeight:
+                        600,
+
                       fontFamily:
                         "'Geist', sans-serif",
+
                       color:
                         "#ffffff",
+
                       whiteSpace:
                         "nowrap",
+
                       overflow:
                         "hidden",
+
                       textOverflow:
                         "ellipsis",
+
                       margin: 0,
                     }}
                   >
@@ -615,53 +868,98 @@ export default function Sidebar({
                   <p
                     style={{
                       fontSize:
-                        "12px",
+                        "11px",
+
                       color:
                         "#d3e4fe",
+
                       whiteSpace:
                         "nowrap",
+
                       overflow:
                         "hidden",
+
                       textOverflow:
                         "ellipsis",
+
                       margin: 0,
+
+                      opacity: 0.75,
                     }}
                   >
-                    {isAdmin
+                    {checkingRole
+                      ? "Loading..."
+                      : isAdmin
                       ? "Group Admin"
-                      : userEmail ||
-                        "Member"}
+                      : "Member"}
                   </p>
                 </div>
+
+                {/* LOGOUT */}
 
                 <button
                   onClick={
                     handleSignOut
                   }
                   title="Sign Out"
+                  aria-label="Sign Out"
                   style={{
+                    width: "36px",
+                    height: "36px",
+
+                    display: "flex",
+
+                    alignItems:
+                      "center",
+
+                    justifyContent:
+                      "center",
+
+                    flexShrink: 0,
+
                     background:
-                      "none",
-                    border: "none",
+                      "rgba(211, 228, 254, 0.06)",
+
+                    border:
+                      "1px solid rgba(211, 228, 254, 0.08)",
+
                     cursor:
                       "pointer",
+
                     color:
-                      "rgba(211, 228, 254, 0.5)",
-                    padding: "4px",
+                      "rgba(211, 228, 254, 0.7)",
+
+                    padding: 0,
+
                     borderRadius:
-                      "4px",
+                      "8px",
+
+                    transition:
+                      "all 0.2s",
                   }}
                   onMouseEnter={(
                     e
                   ) => {
+                    e.currentTarget.style.backgroundColor =
+                      "rgba(186, 26, 26, 0.12)";
+
                     e.currentTarget.style.color =
-                      "#ba1a1a";
+                      "#ffb4ab";
+
+                    e.currentTarget.style.borderColor =
+                      "rgba(186, 26, 26, 0.2)";
                   }}
                   onMouseLeave={(
                     e
                   ) => {
+                    e.currentTarget.style.backgroundColor =
+                      "rgba(211, 228, 254, 0.06)";
+
                     e.currentTarget.style.color =
-                      "rgba(211, 228, 254, 0.5)";
+                      "rgba(211, 228, 254, 0.7)";
+
+                    e.currentTarget.style.borderColor =
+                      "rgba(211, 228, 254, 0.08)";
                   }}
                 >
                   <span className="material-symbols-outlined">
@@ -672,7 +970,9 @@ export default function Sidebar({
             </>
           ) : (
             <>
-              {/* COLLAPSED NEW GROUP — ADMIN ONLY */}
+              {/* =================================================
+                  COLLAPSED ADMIN NEW GROUP
+              ================================================= */}
 
               {isAdmin && (
                 <Link
@@ -681,19 +981,29 @@ export default function Sidebar({
                   style={{
                     width: "44px",
                     height: "44px",
+
                     backgroundColor:
                       "#006b2c",
+
                     color: "#ffffff",
+
                     borderRadius:
                       "12px",
+
                     fontWeight: 700,
+
                     display: "flex",
+
                     alignItems:
                       "center",
+
                     justifyContent:
                       "center",
+
                     textDecoration:
                       "none",
+
+                    flexShrink: 0,
                   }}
                 >
                   <span className="material-symbols-outlined">
@@ -702,39 +1012,130 @@ export default function Sidebar({
                 </Link>
               )}
 
+              {/* =================================================
+                  COLLAPSED USER + LOGOUT
+              ================================================= */}
+
               <div
                 style={{
                   marginTop:
-                    "24px",
+                    "12px",
+
                   display: "flex",
+
+                  alignItems:
+                    "center",
+
                   justifyContent:
                     "center",
+
+                  gap: "8px",
+
+                  flexShrink: 0,
                 }}
               >
                 <div
+                  title={
+                    userEmail ||
+                    userName
+                  }
                   style={{
                     width: "44px",
                     height: "44px",
+
                     borderRadius:
                       "50%",
+
                     backgroundColor:
                       "#00873a",
+
                     color:
                       "#f7fff2",
+
                     display: "flex",
+
                     alignItems:
                       "center",
+
                     justifyContent:
                       "center",
+
                     fontWeight: 700,
+
                     fontSize:
                       "16px",
+
+                    flexShrink: 0,
                   }}
                 >
                   {getInitials(
                     userName
                   )}
                 </div>
+
+                <button
+                  onClick={
+                    handleSignOut
+                  }
+                  title="Sign Out"
+                  aria-label="Sign Out"
+                  style={{
+                    width: "36px",
+                    height: "36px",
+
+                    display: "flex",
+
+                    alignItems:
+                      "center",
+
+                    justifyContent:
+                      "center",
+
+                    background:
+                      "rgba(211, 228, 254, 0.06)",
+
+                    border:
+                      "1px solid rgba(211, 228, 254, 0.08)",
+
+                    borderRadius:
+                      "8px",
+
+                    cursor:
+                      "pointer",
+
+                    color:
+                      "rgba(211, 228, 254, 0.7)",
+
+                    padding: 0,
+
+                    flexShrink: 0,
+
+                    transition:
+                      "all 0.2s",
+                  }}
+                  onMouseEnter={(
+                    e
+                  ) => {
+                    e.currentTarget.style.backgroundColor =
+                      "rgba(186, 26, 26, 0.12)";
+
+                    e.currentTarget.style.color =
+                      "#ffb4ab";
+                  }}
+                  onMouseLeave={(
+                    e
+                  ) => {
+                    e.currentTarget.style.backgroundColor =
+                      "rgba(211, 228, 254, 0.06)";
+
+                    e.currentTarget.style.color =
+                      "rgba(211, 228, 254, 0.7)";
+                  }}
+                >
+                  <span className="material-symbols-outlined">
+                    logout
+                  </span>
+                </button>
               </div>
             </>
           )}
@@ -752,21 +1153,32 @@ export default function Sidebar({
           bottom: 0,
           left: 0,
           right: 0,
+
           zIndex: 49,
+
           backgroundColor:
-            "rgba(255, 255, 255, 0.95)",
+            "rgba(255, 255, 255, 0.96)",
+
           backdropFilter:
             "blur(12px)",
+
           borderTop:
             "1px solid rgba(189, 202, 186, 0.3)",
+
           display: "none",
+
           justifyContent:
             "space-around",
-          alignItems: "center",
+
+          alignItems:
+            "center",
+
           padding:
             "8px 4px 10px 4px",
+
           boxShadow:
             "0 -4px 20px rgba(15, 23, 42, 0.06)",
+
           overflowX: "auto",
         }}
       >
@@ -785,25 +1197,36 @@ export default function Sidebar({
                 href={item.href}
                 style={{
                   display: "flex",
+
                   flexDirection:
                     "column",
+
                   alignItems:
                     "center",
+
                   gap: "3px",
+
                   textDecoration:
                     "none",
+
                   color: isActive
                     ? "#006b2c"
                     : "#6e7b6c",
+
                   padding:
                     "4px 8px",
+
                   borderRadius:
                     "10px",
+
                   transition:
                     "all 0.2s",
+
                   minWidth:
                     "56px",
+
                   flexShrink: 0,
+
                   backgroundColor:
                     isActive
                       ? "rgba(0, 107, 44, 0.06)"
@@ -815,6 +1238,7 @@ export default function Sidebar({
                   style={{
                     fontSize:
                       "22px",
+
                     fontVariationSettings:
                       isActive
                         ? "'FILL' 1"
@@ -828,10 +1252,12 @@ export default function Sidebar({
                   style={{
                     fontSize:
                       "10px",
+
                     fontWeight:
                       isActive
                         ? 700
                         : 500,
+
                     fontFamily:
                       "'Geist', sans-serif",
                   }}
@@ -845,10 +1271,37 @@ export default function Sidebar({
       </nav>
 
       {/* =====================================================
-          RESPONSIVE
+          RESPONSIVE + SCROLLBAR
       ===================================================== */}
 
       <style jsx>{`
+        .sidebar-navigation::-webkit-scrollbar {
+          width: 5px;
+        }
+
+        .sidebar-navigation::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .sidebar-navigation::-webkit-scrollbar-thumb {
+          background: rgba(
+            211,
+            228,
+            254,
+            0.18
+          );
+          border-radius: 999px;
+        }
+
+        .sidebar-navigation::-webkit-scrollbar-thumb:hover {
+          background: rgba(
+            211,
+            228,
+            254,
+            0.3
+          );
+        }
+
         @media (max-width: 1024px) {
           .desktop-sidebar {
             display: none !important;
@@ -872,6 +1325,1841 @@ export default function Sidebar({
     </>
   );
 }
+
+// "use client";
+
+// import { useState, useEffect } from "react";
+// import Link from "next/link";
+// import { usePathname, useRouter } from "next/navigation";
+// import { createClient } from "@/lib/supabase/client";
+
+// interface SidebarProps {
+//   collapsed: boolean;
+//   onToggle: () => void;
+// }
+
+// export default function Sidebar({
+//   collapsed,
+//   onToggle,
+// }: SidebarProps) {
+//   const pathname = usePathname();
+//   const router = useRouter();
+//   const supabase = createClient();
+
+//   const [userName, setUserName] = useState("User");
+//   const [userEmail, setUserEmail] = useState("");
+//   const [isAdmin, setIsAdmin] = useState(false);
+//   const [checkingRole, setCheckingRole] = useState(true);
+
+//   useEffect(() => {
+//     let mounted = true;
+
+//     async function fetchUser() {
+//       try {
+//         const {
+//           data: { user },
+//         } = await supabase.auth.getUser();
+
+//         if (!user) {
+//           if (mounted) {
+//             setCheckingRole(false);
+//           }
+//           return;
+//         }
+
+//         const name =
+//           user.user_metadata?.full_name ||
+//           user.email?.split("@")[0] ||
+//           "User";
+
+//         if (mounted) {
+//           setUserName(name);
+//           setUserEmail(user.email || "");
+//         }
+
+//         /*
+//          * Get profile name if available.
+//          */
+//         const { data: profile } = await supabase
+//           .from("profiles")
+//           .select("full_name")
+//           .eq("id", user.id)
+//           .maybeSingle();
+
+//         if (
+//           mounted &&
+//           profile?.full_name
+//         ) {
+//           setUserName(profile.full_name);
+//         }
+
+//         /*
+//          * ADMIN ACCESS
+//          *
+//          * A user becomes an admin-level sidebar user
+//          * if they are an admin, administrator or owner
+//          * of at least one group.
+//          *
+//          * Treasurer is intentionally included because
+//          * the payment-review screen is an admin financial
+//          * control.
+//          */
+//         const {
+//           data: adminGroups,
+//           error: adminError,
+//         } = await supabase
+//           .from("group_members")
+//           .select("id, role")
+//           .eq("user_id", user.id)
+//           .in("role", [
+//             "admin",
+//             "administrator",
+//             "owner",
+//             "treasurer",
+//           ]);
+
+//         if (mounted) {
+//           if (adminError) {
+//             console.error(
+//               "Unable to check administrator role:",
+//               adminError
+//             );
+
+//             setIsAdmin(false);
+//           } else {
+//             setIsAdmin(
+//               Boolean(
+//                 adminGroups &&
+//                   adminGroups.length > 0
+//               )
+//             );
+//           }
+
+//           setCheckingRole(false);
+//         }
+//       } catch (error) {
+//         console.error(
+//           "Sidebar user loading error:",
+//           error
+//         );
+
+//         if (mounted) {
+//           setCheckingRole(false);
+//         }
+//       }
+//     }
+
+//     fetchUser();
+
+//     return () => {
+//       mounted = false;
+//     };
+//   }, [supabase]);
+
+//   const handleSignOut = async () => {
+//     await supabase.auth.signOut();
+
+//     router.push("/login");
+//     router.refresh();
+//   };
+
+//   const getInitials = (
+//     name: string
+//   ) =>
+//     name
+//       ?.split(" ")
+//       .map((n) => n[0])
+//       .join("")
+//       .toUpperCase()
+//       .slice(0, 2) || "U";
+
+//   /*
+//    * =========================================================
+//    * NORMAL MEMBER NAVIGATION
+//    * =========================================================
+//    *
+//    * These are the ONLY main navigation items available
+//    * to an ordinary member.
+//    *
+//    * Verification has deliberately been removed.
+//    */
+//   const baseNavItems = [
+//     {
+//       icon: "dashboard",
+//       label: "Dashboard",
+//       href: "/dashboard",
+//     },
+//     {
+//       icon: "psychology",
+//       label: "Ask Kolo",
+//       href: "/ask-kolo",
+//     },
+//     {
+//       icon: "track_changes",
+//       label: "Goals",
+//       href: "/goals",
+//     },
+//     {
+//       icon: "groups",
+//       label: "My Groups",
+//       href: "/groups",
+//     },
+//     {
+//       icon: "account_balance_wallet",
+//       label: "Payments",
+//       href: "/payments",
+//     },
+//   ];
+
+//   /*
+//    * =========================================================
+//    * ADMIN NAVIGATION
+//    * =========================================================
+//    *
+//    * Payment Review contains:
+//    *
+//    * - Member payment review
+//    * - Payment proof inspection
+//    * - Confirm / reject
+//    * - Payout control
+//    * - Payout history
+//    */
+//   const adminNavItems = [
+//     {
+//       icon: "psychology",
+//       label: "Treasurer AI",
+//       href: "/treasurer",
+//     },
+//     {
+//       icon: "fact_check",
+//       label: "Payment Review",
+//       href: "/treasurer/payments",
+//     },
+//   ];
+
+//   /*
+//    * =========================================================
+//    * BOTTOM NAVIGATION
+//    * =========================================================
+//    */
+//   const bottomNavItems = [
+//     {
+//       icon: "settings",
+//       label: "Settings",
+//       href: "/settings",
+//     },
+//   ];
+
+//   /*
+//    * NORMAL:
+//    *
+//    * Dashboard
+//    * Ask Kolo
+//    * Goals
+//    * My Groups
+//    * Payments
+//    * Settings
+//    *
+//    * ADMIN:
+//    *
+//    * Everything above
+//    * +
+//    * Treasurer AI
+//    * Payment Review
+//    */
+//   const navItems = [
+//     ...baseNavItems,
+//     ...(isAdmin ? adminNavItems : []),
+//     ...bottomNavItems,
+//   ];
+
+//   /*
+//    * =========================================================
+//    * MOBILE NAVIGATION
+//    * =========================================================
+//    *
+//    * Same permissions as desktop.
+//    *
+//    * Verification is NOT shown to ordinary members.
+//    */
+//   const mobileNavItems = [
+//     {
+//       icon: "dashboard",
+//       label: "Home",
+//       href: "/dashboard",
+//     },
+//     {
+//       icon: "psychology",
+//       label: "Ask Kolo",
+//       href: "/ask-kolo",
+//     },
+//     {
+//       icon: "track_changes",
+//       label: "Goals",
+//       href: "/goals",
+//     },
+//     {
+//       icon: "groups",
+//       label: "Groups",
+//       href: "/groups",
+//     },
+//     {
+//       icon: "account_balance_wallet",
+//       label: "Pay",
+//       href: "/payments",
+//     },
+
+//     ...(isAdmin
+//       ? [
+//           {
+//             icon: "fact_check",
+//             label: "Review",
+//             href: "/treasurer/payments",
+//           },
+//         ]
+//       : []),
+
+//     {
+//       icon: "settings",
+//       label: "Settings",
+//       href: "/settings",
+//     },
+//   ];
+
+//   return (
+//     <>
+//       {/* =====================================================
+//           DESKTOP SIDEBAR
+//       ===================================================== */}
+
+//       <aside
+//         className="desktop-sidebar"
+//         style={{
+//           position: "fixed",
+//           left: 0,
+//           top: 0,
+//           height: "100vh",
+//           width: collapsed
+//             ? "80px"
+//             : "280px",
+//           backgroundColor: "#213145",
+//           display: "flex",
+//           flexDirection: "column",
+//           padding: collapsed
+//             ? "24px 12px"
+//             : "24px 16px",
+//           gap: "8px",
+//           zIndex: 50,
+//           boxShadow:
+//             "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+//           transition:
+//             "width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+//           overflow: "hidden",
+//         }}
+//       >
+//         {/* =====================================================
+//             LOGO + TOGGLE
+//         ===================================================== */}
+
+//         <div
+//           style={{
+//             display: "flex",
+//             alignItems: "center",
+//             justifyContent: collapsed
+//               ? "center"
+//               : "space-between",
+//             padding: collapsed
+//               ? "0"
+//               : "0 16px",
+//             marginBottom: "40px",
+//             minHeight: "48px",
+//           }}
+//         >
+//           {!collapsed && (
+//             <div>
+//               <h1
+//                 style={{
+//                   fontSize: "24px",
+//                   fontWeight: 900,
+//                   fontFamily:
+//                     "'Inter', sans-serif",
+//                   color: "#ffffff",
+//                   whiteSpace: "nowrap",
+//                   margin: 0,
+//                 }}
+//               >
+//                 Kolo AI
+//               </h1>
+
+//               <p
+//                 style={{
+//                   fontSize: "14px",
+//                   fontWeight: 500,
+//                   fontFamily:
+//                     "'Geist', sans-serif",
+//                   color:
+//                     "rgba(211, 228, 254, 0.7)",
+//                   whiteSpace: "nowrap",
+//                   margin: 0,
+//                 }}
+//               >
+//                 {isAdmin
+//                   ? "Institutional Wealth"
+//                   : "Community Wealth"}
+//               </p>
+//             </div>
+//           )}
+
+//           {collapsed && (
+//             <div
+//               style={{
+//                 width: "40px",
+//                 height: "40px",
+//                 backgroundColor:
+//                   "#006b2c",
+//                 borderRadius: "12px",
+//                 display: "flex",
+//                 alignItems: "center",
+//                 justifyContent: "center",
+//               }}
+//             >
+//               <span
+//                 className="material-symbols-outlined"
+//                 style={{
+//                   color: "#ffffff",
+//                   fontVariationSettings:
+//                     "'FILL' 1",
+//                 }}
+//               >
+//                 savings
+//               </span>
+//             </div>
+//           )}
+
+//           <button
+//             onClick={onToggle}
+//             aria-label={
+//               collapsed
+//                 ? "Expand sidebar"
+//                 : "Collapse sidebar"
+//             }
+//             style={{
+//               width: "32px",
+//               height: "32px",
+//               borderRadius: "8px",
+//               backgroundColor:
+//                 "rgba(211, 228, 254, 0.1)",
+//               border: "none",
+//               cursor: "pointer",
+//               display: "flex",
+//               alignItems: "center",
+//               justifyContent: "center",
+//               color: "#d3e4fe",
+//               transition:
+//                 "background-color 0.2s",
+//               flexShrink: 0,
+//               marginLeft: collapsed
+//                 ? 0
+//                 : "8px",
+//             }}
+//             onMouseEnter={(e) => {
+//               e.currentTarget.style.backgroundColor =
+//                 "rgba(211, 228, 254, 0.2)";
+//             }}
+//             onMouseLeave={(e) => {
+//               e.currentTarget.style.backgroundColor =
+//                 "rgba(211, 228, 254, 0.1)";
+//             }}
+//           >
+//             <span
+//               className="material-symbols-outlined"
+//               style={{
+//                 fontSize: "20px",
+//                 transition:
+//                   "transform 0.3s",
+//                 transform: collapsed
+//                   ? "rotate(180deg)"
+//                   : "rotate(0deg)",
+//               }}
+//             >
+//               {collapsed
+//                 ? "chevron_right"
+//                 : "chevron_left"}
+//             </span>
+//           </button>
+//         </div>
+
+//         {/* =====================================================
+//             NAVIGATION
+//         ===================================================== */}
+
+//         <nav
+//           style={{
+//             flex: 1,
+//             display: "flex",
+//             flexDirection: "column",
+//             gap: "4px",
+//           }}
+//         >
+//           {navItems.map((item) => {
+//             const isActive =
+//               pathname === item.href ||
+//               pathname.startsWith(
+//                 item.href + "/"
+//               );
+
+//             return (
+//               <Link
+//                 key={item.label}
+//                 href={item.href}
+//                 title={
+//                   collapsed
+//                     ? item.label
+//                     : undefined
+//                 }
+//                 style={{
+//                   display: "flex",
+//                   alignItems: "center",
+//                   gap: collapsed
+//                     ? "0"
+//                     : "16px",
+//                   justifyContent:
+//                     collapsed
+//                       ? "center"
+//                       : "flex-start",
+//                   padding: collapsed
+//                     ? "12px"
+//                     : "12px 24px",
+//                   borderRadius: "8px",
+//                   fontWeight: isActive
+//                     ? 700
+//                     : 400,
+//                   transition:
+//                     "all 0.2s",
+//                   textDecoration:
+//                     "none",
+//                   backgroundColor:
+//                     isActive
+//                       ? "#00873a"
+//                       : "transparent",
+//                   color: isActive
+//                     ? "#f7fff2"
+//                     : "#d3e4fe",
+//                   transform: isActive
+//                     ? "translateX(4px)"
+//                     : "none",
+//                   whiteSpace:
+//                     "nowrap",
+//                   overflow:
+//                     "hidden",
+//                 }}
+//                 onMouseEnter={(e) => {
+//                   if (!isActive) {
+//                     e.currentTarget.style.backgroundColor =
+//                       "rgba(63, 70, 92, 0.5)";
+//                     e.currentTarget.style.color =
+//                       "#eaf1ff";
+//                   }
+//                 }}
+//                 onMouseLeave={(e) => {
+//                   if (!isActive) {
+//                     e.currentTarget.style.backgroundColor =
+//                       "transparent";
+//                     e.currentTarget.style.color =
+//                       "#d3e4fe";
+//                   }
+//                 }}
+//               >
+//                 <span
+//                   className="material-symbols-outlined"
+//                   style={{
+//                     fontSize: "22px",
+//                     flexShrink: 0,
+//                   }}
+//                 >
+//                   {item.icon}
+//                 </span>
+
+//                 {!collapsed && (
+//                   <span
+//                     style={{
+//                       fontSize: "14px",
+//                       fontWeight: 500,
+//                       fontFamily:
+//                         "'Geist', sans-serif",
+//                     }}
+//                   >
+//                     {item.label}
+//                   </span>
+//                 )}
+//               </Link>
+//             );
+//           })}
+//         </nav>
+
+//         {/* =====================================================
+//             BOTTOM SECTION
+//         ===================================================== */}
+
+//         <div
+//           style={{
+//             marginTop: "auto",
+//             padding: collapsed
+//               ? "0"
+//               : "0 16px",
+//             paddingTop: "24px",
+//             borderTop:
+//               "1px solid rgba(211, 228, 254, 0.1)",
+//             display: "flex",
+//             flexDirection: "column",
+//             alignItems: collapsed
+//               ? "center"
+//               : "stretch",
+//           }}
+//         >
+//           {/* =================================================
+//               NEW GROUP
+//               ADMIN ONLY
+//           ================================================= */}
+
+//           {!collapsed ? (
+//             <>
+//               {isAdmin && (
+//                 <Link
+//                   href="/groups/create"
+//                   style={{
+//                     width: "100%",
+//                     backgroundColor:
+//                       "#006b2c",
+//                     color: "#ffffff",
+//                     padding: "16px",
+//                     borderRadius: "12px",
+//                     fontWeight: 700,
+//                     display: "flex",
+//                     alignItems: "center",
+//                     justifyContent:
+//                       "center",
+//                     gap: "8px",
+//                     fontSize: "14px",
+//                     fontFamily:
+//                       "'Geist', sans-serif",
+//                     textDecoration:
+//                       "none",
+//                     transition:
+//                       "all 0.2s",
+//                     boxSizing:
+//                       "border-box",
+//                   }}
+//                 >
+//                   <span className="material-symbols-outlined">
+//                     add
+//                   </span>
+
+//                   New Group
+//                 </Link>
+//               )}
+
+//               {/* USER PROFILE */}
+
+//               <div
+//                 style={{
+//                   marginTop: "24px",
+//                   display: "flex",
+//                   alignItems: "center",
+//                   gap: "16px",
+//                   padding: "8px",
+//                   backgroundColor:
+//                     "rgba(211, 228, 254, 0.05)",
+//                   borderRadius: "8px",
+//                 }}
+//               >
+//                 <div
+//                   style={{
+//                     width: "40px",
+//                     height: "40px",
+//                     borderRadius: "50%",
+//                     backgroundColor:
+//                       "#00873a",
+//                     color:
+//                       "#f7fff2",
+//                     display: "flex",
+//                     alignItems:
+//                       "center",
+//                     justifyContent:
+//                       "center",
+//                     fontWeight: 700,
+//                     fontSize: "14px",
+//                     flexShrink: 0,
+//                   }}
+//                 >
+//                   {getInitials(
+//                     userName
+//                   )}
+//                 </div>
+
+//                 <div
+//                   style={{
+//                     overflow:
+//                       "hidden",
+//                     flex: 1,
+//                   }}
+//                 >
+//                   <p
+//                     style={{
+//                       fontSize:
+//                         "14px",
+//                       fontWeight: 500,
+//                       fontFamily:
+//                         "'Geist', sans-serif",
+//                       color:
+//                         "#ffffff",
+//                       whiteSpace:
+//                         "nowrap",
+//                       overflow:
+//                         "hidden",
+//                       textOverflow:
+//                         "ellipsis",
+//                       margin: 0,
+//                     }}
+//                   >
+//                     {userName}
+//                   </p>
+
+//                   <p
+//                     style={{
+//                       fontSize:
+//                         "12px",
+//                       color:
+//                         "#d3e4fe",
+//                       whiteSpace:
+//                         "nowrap",
+//                       overflow:
+//                         "hidden",
+//                       textOverflow:
+//                         "ellipsis",
+//                       margin: 0,
+//                     }}
+//                   >
+//                     {checkingRole
+//                       ? "Loading..."
+//                       : isAdmin
+//                       ? "Group Admin"
+//                       : "Member"}
+//                   </p>
+//                 </div>
+
+//                 <button
+//                   onClick={
+//                     handleSignOut
+//                   }
+//                   title="Sign Out"
+//                   style={{
+//                     background:
+//                       "none",
+//                     border: "none",
+//                     cursor:
+//                       "pointer",
+//                     color:
+//                       "rgba(211, 228, 254, 0.5)",
+//                     padding: "4px",
+//                     borderRadius:
+//                       "4px",
+//                   }}
+//                   onMouseEnter={(e) => {
+//                     e.currentTarget.style.color =
+//                       "#ba1a1a";
+//                   }}
+//                   onMouseLeave={(e) => {
+//                     e.currentTarget.style.color =
+//                       "rgba(211, 228, 254, 0.5)";
+//                   }}
+//                 >
+//                   <span className="material-symbols-outlined">
+//                     logout
+//                   </span>
+//                 </button>
+//               </div>
+//             </>
+//           ) : (
+//             <>
+//               {/* COLLAPSED ADMIN NEW GROUP */}
+
+//               {isAdmin && (
+//                 <Link
+//                   href="/groups/create"
+//                   title="New Group"
+//                   style={{
+//                     width: "44px",
+//                     height: "44px",
+//                     backgroundColor:
+//                       "#006b2c",
+//                     color: "#ffffff",
+//                     borderRadius:
+//                       "12px",
+//                     fontWeight: 700,
+//                     display: "flex",
+//                     alignItems:
+//                       "center",
+//                     justifyContent:
+//                       "center",
+//                     textDecoration:
+//                       "none",
+//                   }}
+//                 >
+//                   <span className="material-symbols-outlined">
+//                     add
+//                   </span>
+//                 </Link>
+//               )}
+
+//               {/* COLLAPSED USER */}
+
+//               <div
+//                 style={{
+//                   marginTop:
+//                     "24px",
+//                   display: "flex",
+//                   justifyContent:
+//                     "center",
+//                 }}
+//               >
+//                 <div
+//                   style={{
+//                     width: "44px",
+//                     height: "44px",
+//                     borderRadius:
+//                       "50%",
+//                     backgroundColor:
+//                       "#00873a",
+//                     color:
+//                       "#f7fff2",
+//                     display: "flex",
+//                     alignItems:
+//                       "center",
+//                     justifyContent:
+//                       "center",
+//                     fontWeight: 700,
+//                     fontSize:
+//                       "16px",
+//                   }}
+//                 >
+//                   {getInitials(
+//                     userName
+//                   )}
+//                 </div>
+//               </div>
+//             </>
+//           )}
+//         </div>
+//       </aside>
+
+//       {/* =====================================================
+//           MOBILE BOTTOM NAV
+//       ===================================================== */}
+
+//       <nav
+//         className="mobile-bottom-nav"
+//         style={{
+//           position: "fixed",
+//           bottom: 0,
+//           left: 0,
+//           right: 0,
+//           zIndex: 49,
+//           backgroundColor:
+//             "rgba(255, 255, 255, 0.96)",
+//           backdropFilter:
+//             "blur(12px)",
+//           borderTop:
+//             "1px solid rgba(189, 202, 186, 0.3)",
+//           display: "none",
+//           justifyContent:
+//             "space-around",
+//           alignItems: "center",
+//           padding:
+//             "8px 4px 10px 4px",
+//           boxShadow:
+//             "0 -4px 20px rgba(15, 23, 42, 0.06)",
+//           overflowX: "auto",
+//         }}
+//       >
+//         {mobileNavItems.map(
+//           (item) => {
+//             const isActive =
+//               pathname ===
+//                 item.href ||
+//               pathname.startsWith(
+//                 item.href + "/"
+//               );
+
+//             return (
+//               <Link
+//                 key={item.label}
+//                 href={item.href}
+//                 style={{
+//                   display: "flex",
+//                   flexDirection:
+//                     "column",
+//                   alignItems:
+//                     "center",
+//                   gap: "3px",
+//                   textDecoration:
+//                     "none",
+//                   color: isActive
+//                     ? "#006b2c"
+//                     : "#6e7b6c",
+//                   padding:
+//                     "4px 8px",
+//                   borderRadius:
+//                     "10px",
+//                   transition:
+//                     "all 0.2s",
+//                   minWidth:
+//                     "56px",
+//                   flexShrink: 0,
+//                   backgroundColor:
+//                     isActive
+//                       ? "rgba(0, 107, 44, 0.06)"
+//                       : "transparent",
+//                 }}
+//               >
+//                 <span
+//                   className="material-symbols-outlined"
+//                   style={{
+//                     fontSize:
+//                       "22px",
+//                     fontVariationSettings:
+//                       isActive
+//                         ? "'FILL' 1"
+//                         : "'FILL' 0",
+//                   }}
+//                 >
+//                   {item.icon}
+//                 </span>
+
+//                 <span
+//                   style={{
+//                     fontSize:
+//                       "10px",
+//                     fontWeight:
+//                       isActive
+//                         ? 700
+//                         : 500,
+//                     fontFamily:
+//                       "'Geist', sans-serif",
+//                   }}
+//                 >
+//                   {item.label}
+//                 </span>
+//               </Link>
+//             );
+//           }
+//         )}
+//       </nav>
+
+//       {/* =====================================================
+//           RESPONSIVE
+//       ===================================================== */}
+
+//       <style jsx>{`
+//         @media (max-width: 1024px) {
+//           .desktop-sidebar {
+//             display: none !important;
+//           }
+
+//           .mobile-bottom-nav {
+//             display: flex !important;
+//           }
+//         }
+
+//         @media (min-width: 1025px) {
+//           .desktop-sidebar {
+//             display: flex !important;
+//           }
+
+//           .mobile-bottom-nav {
+//             display: none !important;
+//           }
+//         }
+//       `}</style>
+//     </>
+//   );
+// }
+
+
+// "use client";
+
+// import { useState, useEffect } from "react";
+// import Link from "next/link";
+// import { usePathname, useRouter } from "next/navigation";
+// import { createClient } from "@/lib/supabase/client";
+
+// interface SidebarProps {
+//   collapsed: boolean;
+//   onToggle: () => void;
+// }
+
+// export default function Sidebar({
+//   collapsed,
+//   onToggle,
+// }: SidebarProps) {
+//   const pathname = usePathname();
+//   const router = useRouter();
+//   const supabase = createClient();
+
+//   const [userName, setUserName] = useState("User");
+//   const [userEmail, setUserEmail] = useState("");
+//   const [isAdmin, setIsAdmin] = useState(false);
+
+//   useEffect(() => {
+//     async function fetchUser() {
+//       const {
+//         data: { user },
+//       } = await supabase.auth.getUser();
+
+//       if (!user) return;
+
+//       const name =
+//         user.user_metadata?.full_name ||
+//         user.email?.split("@")[0] ||
+//         "User";
+
+//       setUserName(name);
+//       setUserEmail(user.email || "");
+
+//       const { data: profile } = await supabase
+//         .from("profiles")
+//         .select("full_name")
+//         .eq("id", user.id)
+//         .maybeSingle();
+
+//       if (profile?.full_name) {
+//         setUserName(profile.full_name);
+//       }
+
+//       /*
+//        * ADMIN ACCESS
+//        *
+//        * Only users who are administrators of
+//        * at least one group get the admin controls.
+//        */
+//       const { data: adminGroups } = await supabase
+//         .from("group_members")
+//         .select("id")
+//         .eq("user_id", user.id)
+//         .in("role", [
+//           "admin",
+//           "administrator",
+//           "owner",
+//         ]);
+
+//       setIsAdmin(
+//         !!adminGroups &&
+//           adminGroups.length > 0
+//       );
+//     }
+
+//     fetchUser();
+//   }, [supabase]);
+
+//   const handleSignOut = async () => {
+//     await supabase.auth.signOut();
+
+//     router.push("/login");
+//     router.refresh();
+//   };
+
+//   const getInitials = (name: string) =>
+//     name
+//       ?.split(" ")
+//       .map((n) => n[0])
+//       .join("")
+//       .toUpperCase()
+//       .slice(0, 2) || "U";
+
+//   /*
+//    * NORMAL USER NAVIGATION
+//    */
+//   const baseNavItems = [
+//     {
+//       icon: "dashboard",
+//       label: "Dashboard",
+//       href: "/dashboard",
+//     },
+//     {
+//       icon: "track_changes",
+//       label: "Goals",
+//       href: "/goals",
+//     },
+//     {
+//       icon: "psychology",
+//       label: "Ask Kolo",
+//       href: "/ask-kolo",
+//     },
+//     {
+//       icon: "groups",
+//       label: "My Groups",
+//       href: "/groups",
+//     },
+//     {
+//       icon: "verified_user",
+//       label: "Verification",
+//       href: "/verification",
+//     },
+//     {
+//       icon: "account_balance_wallet",
+//       label: "Payments",
+//       href: "/payments",
+//     },
+//   ];
+
+//   /*
+//    * ADMIN / TREASURER NAVIGATION
+//    *
+//    * Payment Review contains:
+//    * - member payment review
+//    * - payment proof inspection
+//    * - confirm / reject
+//    * - payout control
+//    * - payout history
+//    */
+//   const adminNavItems = [
+//     {
+//       icon: "psychology",
+//       label: "Treasurer AI",
+//       href: "/treasurer",
+//     },
+//     {
+//       icon: "fact_check",
+//       label: "Payment Review",
+//       href: "/treasurer/payments",
+//     },
+//   ];
+
+//   const bottomNavItems = [
+//     {
+//       icon: "settings",
+//       label: "Settings",
+//       href: "/settings",
+//     },
+//   ];
+
+//   const navItems = [
+//     ...baseNavItems,
+//     ...(isAdmin ? adminNavItems : []),
+//     ...bottomNavItems,
+//   ];
+
+//   /*
+//    * MOBILE NAVIGATION
+//    *
+//    * Payment Review is available to admins here too.
+//    */
+//   const mobileNavItems = [
+//     {
+//       icon: "dashboard",
+//       label: "Home",
+//       href: "/dashboard",
+//     },
+//     {
+//       icon: "track_changes",
+//       label: "Goals",
+//       href: "/goals",
+//     },
+//     {
+//       icon: "psychology",
+//       label: "Ask Kolo",
+//       href: "/ask-kolo",
+//     },
+//     {
+//       icon: "groups",
+//       label: "Groups",
+//       href: "/groups",
+//     },
+//     {
+//       icon: "verified_user",
+//       label: "Verification",
+//       href: "/verification",
+//     },
+
+//     ...(isAdmin
+//       ? [
+//           {
+//             icon: "psychology",
+//             label: "AI",
+//             href: "/treasurer",
+//           },
+//           {
+//             icon: "fact_check",
+//             label: "Review",
+//             href: "/treasurer/payments",
+//           },
+//         ]
+//       : []),
+
+//     {
+//       icon: "account_balance_wallet",
+//       label: "Pay",
+//       href: "/payments",
+//     },
+
+//     {
+//       icon: "settings",
+//       label: "Settings",
+//       href: "/settings",
+//     },
+//   ];
+
+//   return (
+//     <>
+//       {/* =====================================================
+//           DESKTOP SIDEBAR
+//       ===================================================== */}
+
+//       <aside
+//         className="desktop-sidebar"
+//         style={{
+//           position: "fixed",
+//           left: 0,
+//           top: 0,
+//           height: "100vh",
+//           width: collapsed
+//             ? "80px"
+//             : "280px",
+//           backgroundColor: "#213145",
+//           display: "flex",
+//           flexDirection: "column",
+//           padding: collapsed
+//             ? "24px 12px"
+//             : "24px 16px",
+//           gap: "8px",
+//           zIndex: 50,
+//           boxShadow:
+//             "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+//           transition:
+//             "width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+//           overflow: "hidden",
+//         }}
+//       >
+//         {/* =====================================================
+//             LOGO + TOGGLE
+//         ===================================================== */}
+
+//         <div
+//           style={{
+//             display: "flex",
+//             alignItems: "center",
+//             justifyContent: collapsed
+//               ? "center"
+//               : "space-between",
+//             padding: collapsed
+//               ? "0"
+//               : "0 16px",
+//             marginBottom: "40px",
+//             minHeight: "48px",
+//           }}
+//         >
+//           {!collapsed && (
+//             <div>
+//               <h1
+//                 style={{
+//                   fontSize: "24px",
+//                   fontWeight: 900,
+//                   fontFamily:
+//                     "'Inter', sans-serif",
+//                   color: "#ffffff",
+//                   whiteSpace: "nowrap",
+//                 }}
+//               >
+//                 Kolo AI
+//               </h1>
+
+//               <p
+//                 style={{
+//                   fontSize: "14px",
+//                   fontWeight: 500,
+//                   fontFamily:
+//                     "'Geist', sans-serif",
+//                   color:
+//                     "rgba(211, 228, 254, 0.7)",
+//                   whiteSpace: "nowrap",
+//                 }}
+//               >
+//                 {isAdmin
+//                   ? "Institutional Wealth"
+//                   : "Community Wealth"}
+//               </p>
+//             </div>
+//           )}
+
+//           {collapsed && (
+//             <div
+//               style={{
+//                 width: "40px",
+//                 height: "40px",
+//                 backgroundColor:
+//                   "#006b2c",
+//                 borderRadius: "12px",
+//                 display: "flex",
+//                 alignItems: "center",
+//                 justifyContent: "center",
+//               }}
+//             >
+//               <span
+//                 className="material-symbols-outlined"
+//                 style={{
+//                   color: "#ffffff",
+//                   fontVariationSettings:
+//                     "'FILL' 1",
+//                 }}
+//               >
+//                 savings
+//               </span>
+//             </div>
+//           )}
+
+//           <button
+//             onClick={onToggle}
+//             style={{
+//               width: "32px",
+//               height: "32px",
+//               borderRadius: "8px",
+//               backgroundColor:
+//                 "rgba(211, 228, 254, 0.1)",
+//               border: "none",
+//               cursor: "pointer",
+//               display: "flex",
+//               alignItems: "center",
+//               justifyContent: "center",
+//               color: "#d3e4fe",
+//               transition:
+//                 "background-color 0.2s",
+//               flexShrink: 0,
+//               marginLeft: collapsed
+//                 ? 0
+//                 : "8px",
+//             }}
+//             onMouseEnter={(e) => {
+//               e.currentTarget.style.backgroundColor =
+//                 "rgba(211, 228, 254, 0.2)";
+//             }}
+//             onMouseLeave={(e) => {
+//               e.currentTarget.style.backgroundColor =
+//                 "rgba(211, 228, 254, 0.1)";
+//             }}
+//           >
+//             <span
+//               className="material-symbols-outlined"
+//               style={{
+//                 fontSize: "20px",
+//                 transition:
+//                   "transform 0.3s",
+//                 transform: collapsed
+//                   ? "rotate(180deg)"
+//                   : "rotate(0deg)",
+//               }}
+//             >
+//               {collapsed
+//                 ? "chevron_right"
+//                 : "chevron_left"}
+//             </span>
+//           </button>
+//         </div>
+
+//         {/* =====================================================
+//             NAVIGATION
+//         ===================================================== */}
+
+//         <nav
+//           style={{
+//             flex: 1,
+//             display: "flex",
+//             flexDirection: "column",
+//             gap: "4px",
+//           }}
+//         >
+//           {navItems.map((item) => {
+//             const isActive =
+//               pathname === item.href ||
+//               pathname.startsWith(
+//                 item.href + "/"
+//               );
+
+//             return (
+//               <Link
+//                 key={item.label}
+//                 href={item.href}
+//                 title={
+//                   collapsed
+//                     ? item.label
+//                     : undefined
+//                 }
+//                 style={{
+//                   display: "flex",
+//                   alignItems: "center",
+//                   gap: collapsed
+//                     ? "0"
+//                     : "16px",
+//                   justifyContent:
+//                     collapsed
+//                       ? "center"
+//                       : "flex-start",
+//                   padding: collapsed
+//                     ? "12px"
+//                     : "12px 24px",
+//                   borderRadius: "8px",
+//                   fontWeight: isActive
+//                     ? 700
+//                     : 400,
+//                   transition:
+//                     "all 0.2s",
+//                   textDecoration:
+//                     "none",
+//                   backgroundColor:
+//                     isActive
+//                       ? "#00873a"
+//                       : "transparent",
+//                   color: isActive
+//                     ? "#f7fff2"
+//                     : "#d3e4fe",
+//                   transform: isActive
+//                     ? "translateX(4px)"
+//                     : "none",
+//                   whiteSpace:
+//                     "nowrap",
+//                   overflow:
+//                     "hidden",
+//                 }}
+//                 onMouseEnter={(e) => {
+//                   if (!isActive) {
+//                     e.currentTarget.style.backgroundColor =
+//                       "rgba(63, 70, 92, 0.5)";
+//                     e.currentTarget.style.color =
+//                       "#eaf1ff";
+//                   }
+//                 }}
+//                 onMouseLeave={(e) => {
+//                   if (!isActive) {
+//                     e.currentTarget.style.backgroundColor =
+//                       "transparent";
+//                     e.currentTarget.style.color =
+//                       "#d3e4fe";
+//                   }
+//                 }}
+//               >
+//                 <span
+//                   className="material-symbols-outlined"
+//                   style={{
+//                     fontSize: "22px",
+//                     flexShrink: 0,
+//                   }}
+//                 >
+//                   {item.icon}
+//                 </span>
+
+//                 {!collapsed && (
+//                   <span
+//                     style={{
+//                       fontSize: "14px",
+//                       fontWeight: 500,
+//                       fontFamily:
+//                         "'Geist', sans-serif",
+//                     }}
+//                   >
+//                     {item.label}
+//                   </span>
+//                 )}
+//               </Link>
+//             );
+//           })}
+//         </nav>
+
+//         {/* =====================================================
+//             BOTTOM SECTION
+//         ===================================================== */}
+
+//         <div
+//           style={{
+//             marginTop: "auto",
+//             padding: collapsed
+//               ? "0"
+//               : "0 16px",
+//             paddingTop: "24px",
+//             borderTop:
+//               "1px solid rgba(211, 228, 254, 0.1)",
+//             display: "flex",
+//             flexDirection: "column",
+//             alignItems: collapsed
+//               ? "center"
+//               : "stretch",
+//           }}
+//         >
+//           {!collapsed ? (
+//             <>
+//               {/* =================================================
+//                   NEW GROUP
+//                   ONLY ADMINS SEE THIS
+//               ================================================= */}
+
+//               {isAdmin && (
+//                 <Link
+//                   href="/groups/create"
+//                   style={{
+//                     width: "100%",
+//                     backgroundColor:
+//                       "#006b2c",
+//                     color: "#ffffff",
+//                     padding: "16px",
+//                     borderRadius: "12px",
+//                     fontWeight: 700,
+//                     display: "flex",
+//                     alignItems: "center",
+//                     justifyContent:
+//                       "center",
+//                     gap: "8px",
+//                     fontSize: "14px",
+//                     fontFamily:
+//                       "'Geist', sans-serif",
+//                     textDecoration:
+//                       "none",
+//                     transition:
+//                       "all 0.2s",
+//                     boxSizing:
+//                       "border-box",
+//                   }}
+//                 >
+//                   <span className="material-symbols-outlined">
+//                     add
+//                   </span>
+
+//                   New Group
+//                 </Link>
+//               )}
+
+//               {/* USER */}
+//               <div
+//                 style={{
+//                   marginTop: "24px",
+//                   display: "flex",
+//                   alignItems: "center",
+//                   gap: "16px",
+//                   padding: "8px",
+//                   backgroundColor:
+//                     "rgba(211, 228, 254, 0.05)",
+//                   borderRadius: "8px",
+//                 }}
+//               >
+//                 <div
+//                   style={{
+//                     width: "40px",
+//                     height: "40px",
+//                     borderRadius: "50%",
+//                     backgroundColor:
+//                       "#00873a",
+//                     color:
+//                       "#f7fff2",
+//                     display: "flex",
+//                     alignItems:
+//                       "center",
+//                     justifyContent:
+//                       "center",
+//                     fontWeight: 700,
+//                     fontSize: "14px",
+//                     flexShrink: 0,
+//                   }}
+//                 >
+//                   {getInitials(
+//                     userName
+//                   )}
+//                 </div>
+
+//                 <div
+//                   style={{
+//                     overflow:
+//                       "hidden",
+//                     flex: 1,
+//                   }}
+//                 >
+//                   <p
+//                     style={{
+//                       fontSize:
+//                         "14px",
+//                       fontWeight: 500,
+//                       fontFamily:
+//                         "'Geist', sans-serif",
+//                       color:
+//                         "#ffffff",
+//                       whiteSpace:
+//                         "nowrap",
+//                       overflow:
+//                         "hidden",
+//                       textOverflow:
+//                         "ellipsis",
+//                       margin: 0,
+//                     }}
+//                   >
+//                     {userName}
+//                   </p>
+
+//                   <p
+//                     style={{
+//                       fontSize:
+//                         "12px",
+//                       color:
+//                         "#d3e4fe",
+//                       whiteSpace:
+//                         "nowrap",
+//                       overflow:
+//                         "hidden",
+//                       textOverflow:
+//                         "ellipsis",
+//                       margin: 0,
+//                     }}
+//                   >
+//                     {isAdmin
+//                       ? "Group Admin"
+//                       : userEmail ||
+//                         "Member"}
+//                   </p>
+//                 </div>
+
+//                 <button
+//                   onClick={
+//                     handleSignOut
+//                   }
+//                   title="Sign Out"
+//                   style={{
+//                     background:
+//                       "none",
+//                     border: "none",
+//                     cursor:
+//                       "pointer",
+//                     color:
+//                       "rgba(211, 228, 254, 0.5)",
+//                     padding: "4px",
+//                     borderRadius:
+//                       "4px",
+//                   }}
+//                   onMouseEnter={(
+//                     e
+//                   ) => {
+//                     e.currentTarget.style.color =
+//                       "#ba1a1a";
+//                   }}
+//                   onMouseLeave={(
+//                     e
+//                   ) => {
+//                     e.currentTarget.style.color =
+//                       "rgba(211, 228, 254, 0.5)";
+//                   }}
+//                 >
+//                   <span className="material-symbols-outlined">
+//                     logout
+//                   </span>
+//                 </button>
+//               </div>
+//             </>
+//           ) : (
+//             <>
+//               {/* COLLAPSED NEW GROUP — ADMIN ONLY */}
+
+//               {isAdmin && (
+//                 <Link
+//                   href="/groups/create"
+//                   title="New Group"
+//                   style={{
+//                     width: "44px",
+//                     height: "44px",
+//                     backgroundColor:
+//                       "#006b2c",
+//                     color: "#ffffff",
+//                     borderRadius:
+//                       "12px",
+//                     fontWeight: 700,
+//                     display: "flex",
+//                     alignItems:
+//                       "center",
+//                     justifyContent:
+//                       "center",
+//                     textDecoration:
+//                       "none",
+//                   }}
+//                 >
+//                   <span className="material-symbols-outlined">
+//                     add
+//                   </span>
+//                 </Link>
+//               )}
+
+//               <div
+//                 style={{
+//                   marginTop:
+//                     "24px",
+//                   display: "flex",
+//                   justifyContent:
+//                     "center",
+//                 }}
+//               >
+//                 <div
+//                   style={{
+//                     width: "44px",
+//                     height: "44px",
+//                     borderRadius:
+//                       "50%",
+//                     backgroundColor:
+//                       "#00873a",
+//                     color:
+//                       "#f7fff2",
+//                     display: "flex",
+//                     alignItems:
+//                       "center",
+//                     justifyContent:
+//                       "center",
+//                     fontWeight: 700,
+//                     fontSize:
+//                       "16px",
+//                   }}
+//                 >
+//                   {getInitials(
+//                     userName
+//                   )}
+//                 </div>
+//               </div>
+//             </>
+//           )}
+//         </div>
+//       </aside>
+
+//       {/* =====================================================
+//           MOBILE BOTTOM NAV
+//       ===================================================== */}
+
+//       <nav
+//         className="mobile-bottom-nav"
+//         style={{
+//           position: "fixed",
+//           bottom: 0,
+//           left: 0,
+//           right: 0,
+//           zIndex: 49,
+//           backgroundColor:
+//             "rgba(255, 255, 255, 0.95)",
+//           backdropFilter:
+//             "blur(12px)",
+//           borderTop:
+//             "1px solid rgba(189, 202, 186, 0.3)",
+//           display: "none",
+//           justifyContent:
+//             "space-around",
+//           alignItems: "center",
+//           padding:
+//             "8px 4px 10px 4px",
+//           boxShadow:
+//             "0 -4px 20px rgba(15, 23, 42, 0.06)",
+//           overflowX: "auto",
+//         }}
+//       >
+//         {mobileNavItems.map(
+//           (item) => {
+//             const isActive =
+//               pathname ===
+//                 item.href ||
+//               pathname.startsWith(
+//                 item.href + "/"
+//               );
+
+//             return (
+//               <Link
+//                 key={item.label}
+//                 href={item.href}
+//                 style={{
+//                   display: "flex",
+//                   flexDirection:
+//                     "column",
+//                   alignItems:
+//                     "center",
+//                   gap: "3px",
+//                   textDecoration:
+//                     "none",
+//                   color: isActive
+//                     ? "#006b2c"
+//                     : "#6e7b6c",
+//                   padding:
+//                     "4px 8px",
+//                   borderRadius:
+//                     "10px",
+//                   transition:
+//                     "all 0.2s",
+//                   minWidth:
+//                     "56px",
+//                   flexShrink: 0,
+//                   backgroundColor:
+//                     isActive
+//                       ? "rgba(0, 107, 44, 0.06)"
+//                       : "transparent",
+//                 }}
+//               >
+//                 <span
+//                   className="material-symbols-outlined"
+//                   style={{
+//                     fontSize:
+//                       "22px",
+//                     fontVariationSettings:
+//                       isActive
+//                         ? "'FILL' 1"
+//                         : "'FILL' 0",
+//                   }}
+//                 >
+//                   {item.icon}
+//                 </span>
+
+//                 <span
+//                   style={{
+//                     fontSize:
+//                       "10px",
+//                     fontWeight:
+//                       isActive
+//                         ? 700
+//                         : 500,
+//                     fontFamily:
+//                       "'Geist', sans-serif",
+//                   }}
+//                 >
+//                   {item.label}
+//                 </span>
+//               </Link>
+//             );
+//           }
+//         )}
+//       </nav>
+
+//       {/* =====================================================
+//           RESPONSIVE
+//       ===================================================== */}
+
+//       <style jsx>{`
+//         @media (max-width: 1024px) {
+//           .desktop-sidebar {
+//             display: none !important;
+//           }
+
+//           .mobile-bottom-nav {
+//             display: flex !important;
+//           }
+//         }
+
+//         @media (min-width: 1025px) {
+//           .desktop-sidebar {
+//             display: flex !important;
+//           }
+
+//           .mobile-bottom-nav {
+//             display: none !important;
+//           }
+//         }
+//       `}</style>
+//     </>
+//   );
+// }
 
 
 // "use client";

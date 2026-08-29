@@ -15,8 +15,6 @@ import { createClient } from "@/lib/supabase/client";
 ========================================================= */
 
 type Group = {
-  verification_status: string;
-  verified_at(verified_at: any): boolean;
   id: string;
   name: string;
   description?: string | null;
@@ -39,6 +37,12 @@ type Group = {
   state?: string | null;
 
   created_at?: string | null;
+
+  /*
+   * These are populated from verification_submissions.
+   */
+  verification_status?: string | null;
+  reviewed_at?: string | null;
 };
 
 type Membership = {
@@ -50,12 +54,16 @@ type Membership = {
 type Verification = {
   group_id: string;
   status?: string | null;
-  verified_at?: string | null;
+  reviewed_at?: string | null;
   cooperative_location?: string | null;
 };
 
 type Tab = "mine" | "discover";
-type Filter = "all" | "verified" | "active";
+
+type Filter =
+  | "all"
+  | "verified"
+  | "active";
 
 /* =========================================================
    CONSTANTS
@@ -76,23 +84,39 @@ const GOLD = "#825100";
    HELPERS
 ========================================================= */
 
-function formatNaira(value: number | string | null | undefined) {
+function formatNaira(
+  value: number | string | null | undefined
+) {
   const amount = Number(value || 0);
 
-  return `₦${amount.toLocaleString("en-NG", {
-    maximumFractionDigits: 0,
-  })}`;
+  return `₦${amount.toLocaleString(
+    "en-NG",
+    {
+      maximumFractionDigits: 0,
+    }
+  )}`;
 }
 
-function numberValue(value: number | string | null | undefined) {
+function numberValue(
+  value: number | string | null | undefined
+) {
   return Number(value || 0);
 }
 
+/*
+ * IMPORTANT:
+ *
+ * Kolo verification is determined by the
+ * verification_submissions.status field.
+ *
+ * We do NOT depend on a verification_status
+ * column in groups.
+ */
 function isVerified(group: Group) {
   return (
-    String(group.verification_status || "").toLowerCase() ===
-      "verified" ||
-    Boolean(group.verified_at)
+    String(
+      group.verification_status || ""
+    ).toLowerCase() === "verified"
   );
 }
 
@@ -101,284 +125,491 @@ function isVerified(group: Group) {
 ========================================================= */
 
 export default function GroupsPage() {
-  const supabase = createClient();
+  /*
+   * Keep one Supabase client instance.
+   */
+  const supabase = useMemo(
+    () => createClient(),
+    []
+  );
 
-  const [userId, setUserId] = useState<string>("");
+  const [userId, setUserId] =
+    useState("");
 
-  const [myGroups, setMyGroups] = useState<Group[]>([]);
-  const [discoverGroups, setDiscoverGroups] = useState<Group[]>([]);
+  const [myGroups, setMyGroups] =
+    useState<Group[]>([]);
 
-  const [loading, setLoading] = useState(true);
-  const [discoverLoading, setDiscoverLoading] = useState(true);
+  const [discoverGroups, setDiscoverGroups] =
+    useState<Group[]>([]);
 
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [tab, setTab] = useState<Tab>("mine");
-  const [filter, setFilter] = useState<Filter>("all");
-  const [search, setSearch] = useState("");
+  const [discoverLoading, setDiscoverLoading] =
+    useState(true);
 
-  const [error, setError] = useState("");
+  const [isAdmin, setIsAdmin] =
+    useState(false);
+
+  const [tab, setTab] =
+    useState<Tab>("mine");
+
+  const [filter, setFilter] =
+    useState<Filter>("all");
+
+  const [search, setSearch] =
+    useState("");
+
+  const [error, setError] =
+    useState("");
 
   /* =======================================================
      VERIFICATION ENRICHMENT
   ======================================================= */
 
-  const attachVerification = useCallback(
-    async (groups: Group[]) => {
-      if (!groups.length) return groups;
+  const attachVerification =
+    useCallback(
+      async (
+        groups: Group[]
+      ): Promise<Group[]> => {
+        if (!groups.length) {
+          return groups;
+        }
 
-      const ids = groups.map((group) => group.id);
+        const ids =
+          groups.map(
+            (group) => group.id
+          );
 
-      const { data, error: verificationError } =
-        await supabase
-          .from("verification_submissions")
+        /*
+         * IMPORTANT:
+         *
+         * Your real database has:
+         *
+         * status
+         * reviewed_at
+         *
+         * NOT verified_at.
+         *
+         * Therefore we query reviewed_at.
+         */
+        const {
+          data,
+          error:
+            verificationError,
+        } = await supabase
+          .from(
+            "verification_submissions"
+          )
           .select(
             `
               group_id,
               status,
-              verified_at,
+              reviewed_at,
               cooperative_location
             `
           )
-          .in("group_id", ids)
-          .order("verified_at", {
-            ascending: false,
-          });
+          .in(
+            "group_id",
+            ids
+          )
+          .order(
+            "reviewed_at",
+            {
+              ascending: false,
+              nullsFirst: false,
+            }
+          );
 
-      if (verificationError) {
-        console.warn(
-          "Verification lookup:",
-          verificationError.message
-        );
+        if (
+          verificationError
+        ) {
+          console.error(
+            "Verification lookup failed:",
+            verificationError
+          );
 
-        return groups;
-      }
-
-      const verificationMap = new Map<
-        string,
-        Verification
-      >();
-
-      (data || []).forEach((item) => {
-        const verification =
-          item as Verification;
-
-        if (!verificationMap.has(verification.group_id)) {
-          verificationMap.set(
-            verification.group_id,
-            verification
+          /*
+           * Do NOT silently pretend the group
+           * is unverified when the query itself
+           * failed.
+           */
+          throw new Error(
+            "Unable to check Kolo verification status."
           );
         }
-      });
 
-      return groups.map((group) => {
-        const verification =
-          verificationMap.get(group.id);
+        /*
+         * We may have multiple submissions
+         * for one group.
+         *
+         * Because the results are ordered by
+         * reviewed_at descending, the first
+         * record for each group is the latest
+         * reviewed submission.
+         */
+        const verificationMap =
+          new Map<
+            string,
+            Verification
+          >();
 
-        return {
-          ...group,
+        (
+          data || []
+        ).forEach(
+          (item) => {
+            const verification =
+              item as Verification;
 
-          verification_status:
-            verification?.status || null,
+            if (
+              !verificationMap.has(
+                verification.group_id
+              )
+            ) {
+              verificationMap.set(
+                verification.group_id,
+                verification
+              );
+            }
+          }
+        );
 
-          verified_at:
-            verification?.verified_at || null,
+        return groups.map(
+          (group) => {
+            const verification =
+              verificationMap.get(
+                group.id
+              );
 
-          location:
-            group.location ||
-            group.city ||
-            group.state ||
-            verification?.cooperative_location ||
-            null,
-        };
-      });
-    },
-    [supabase]
-  );
+            return {
+              ...group,
+
+              verification_status:
+                verification?.status ||
+                null,
+
+              reviewed_at:
+                verification?.reviewed_at ||
+                null,
+
+              /*
+               * Prefer group location.
+               * Fall back to the verified
+               * cooperative location.
+               */
+              location:
+                group.location ||
+                group.city ||
+                group.state ||
+                verification?.cooperative_location ||
+                null,
+            };
+          }
+        );
+      },
+      [supabase]
+    );
 
   /* =======================================================
      LOAD CURRENT USER + MY GROUPS
   ======================================================= */
 
-  const loadMyGroups = useCallback(async () => {
-    try {
-      setError("");
+  const loadMyGroups =
+    useCallback(
+      async () => {
+        try {
+          setError("");
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+          const {
+            data: {
+              user,
+            },
+          } =
+            await supabase.auth.getUser();
 
-      if (!user) {
-        window.location.href = "/login";
-        return;
-      }
+          if (!user) {
+            window.location.href =
+              "/login";
+            return;
+          }
 
-      setUserId(user.id);
+          setUserId(user.id);
 
-      const {
-        data,
-        error: membershipError,
-      } = await supabase
-        .from("group_members")
-        .select(
-          `
-            group_id,
-            role,
-            groups(*)
-          `
-        )
-        .eq("user_id", user.id);
+          const {
+            data,
+            error:
+              membershipError,
+          } =
+            await supabase
+              .from(
+                "group_members"
+              )
+              .select(
+                `
+                  group_id,
+                  role,
+                  groups(*)
+                `
+              )
+              .eq(
+                "user_id",
+                user.id
+              );
 
-      if (membershipError) {
-        console.error(
-          "Group membership error:",
-          membershipError
-        );
+          if (
+            membershipError
+          ) {
+            console.error(
+              "Group membership error:",
+              membershipError
+            );
 
-        setError(
-          "We couldn't load your groups. Please try again."
-        );
+            setError(
+              "We couldn't load your groups. Please try again."
+            );
 
-        return;
-      }
+            return;
+          }
 
-      const memberships =
-        (data || []) as unknown as Membership[];
+          const memberships =
+            (data || []) as unknown as Membership[];
 
-      const groups = memberships
-        .map((item) => item.groups)
-        .filter(Boolean) as Group[];
+          const groups =
+            memberships
+              .map(
+                (item) =>
+                  item.groups
+              )
+              .filter(
+                Boolean
+              ) as Group[];
 
-      const enriched =
-        await attachVerification(groups);
+          /*
+           * Attach actual Kolo verification
+           * information from
+           * verification_submissions.
+           */
+          const enriched =
+            await attachVerification(
+              groups
+            );
 
-      setMyGroups(enriched);
+          setMyGroups(
+            enriched
+          );
 
-      const admin =
-        memberships.some((membership) => {
-          const role =
-            String(
-              membership.role || ""
-            ).toLowerCase();
+          /*
+           * Admin detection.
+           */
+          const admin =
+            memberships.some(
+              (membership) => {
+                const role =
+                  String(
+                    membership.role ||
+                      ""
+                  ).toLowerCase();
 
-          return [
-            "admin",
-            "administrator",
-            "owner",
-            "treasurer",
-          ].includes(role);
-        });
+                return [
+                  "admin",
+                  "administrator",
+                  "owner",
+                  "treasurer",
+                ].includes(role);
+              }
+            );
 
-      setIsAdmin(admin);
-    } catch (err) {
-      console.error(
-        "loadMyGroups:",
-        err
-      );
+          setIsAdmin(
+            admin
+          );
+        } catch (err: any) {
+          console.error(
+            "loadMyGroups:",
+            err
+          );
 
-      setError(
-        "Something went wrong while loading your groups."
-      );
-    }
-  }, [
-    supabase,
-    attachVerification,
-  ]);
+          setError(
+            err?.message ||
+              "Something went wrong while loading your groups."
+          );
+        }
+      },
+      [
+        supabase,
+        attachVerification,
+      ]
+    );
 
   /* =======================================================
      LOAD DISCOVERABLE GROUPS
   ======================================================= */
 
-  const loadDiscoverGroups = useCallback(
-    async (currentUserId: string) => {
-      try {
-        setDiscoverLoading(true);
-
-        const {
-          data,
-          error: groupsError,
-        } = await supabase
-          .from("groups")
-          .select(
-            `
-              id,
-              name,
-              description,
-              pool_amount,
-              member_count,
-              max_members,
-              status,
-              cycle_number,
-              contribution_amount,
-              next_due_date,
-              next_payout_date,
-              last_payout_date,
-              created_at
-            `
-          )
-          .neq("status", "archived")
-          .order("created_at", {
-            ascending: false,
-          })
-          .limit(100);
-
-        if (groupsError) {
-          console.error(
-            "Discover groups error:",
-            groupsError
+  const loadDiscoverGroups =
+    useCallback(
+      async (
+        currentUserId: string
+      ) => {
+        try {
+          setDiscoverLoading(
+            true
           );
 
-          setDiscoverGroups([]);
+          const {
+            data,
+            error:
+              groupsError,
+          } =
+            await supabase
+              .from("groups")
+              .select(
+                `
+                  id,
+                  name,
+                  description,
+                  pool_amount,
+                  member_count,
+                  max_members,
+                  status,
+                  cycle_number,
+                  contribution_amount,
+                  next_due_date,
+                  next_payout_date,
+                  last_payout_date,
+                  created_at
+                `
+              )
+              .neq(
+                "status",
+                "archived"
+              )
+              .order(
+                "created_at",
+                {
+                  ascending:
+                    false,
+                }
+              )
+              .limit(100);
 
-          return;
-        }
-
-        const allGroups =
-          (data || []) as Group[];
-
-        const myGroupIds =
-          new Set(
-            myGroups.map(
-              (group) => group.id
-            )
-          );
-
-        const discoverable =
-          allGroups.filter((group) => {
-            const status =
-              String(
-                group.status || ""
-              ).toLowerCase();
-
-            return (
-              !myGroupIds.has(group.id) &&
-              status === "active"
+          if (groupsError) {
+            console.error(
+              "Discover groups error:",
+              groupsError
             );
-          });
 
-        const enriched =
-          await attachVerification(
-            discoverable
+            setDiscoverGroups(
+              []
+            );
+
+            return;
+          }
+
+          const allGroups =
+            (data || []) as Group[];
+
+          /*
+           * Get the user's existing
+           * groups directly from the
+           * groups_members table.
+           *
+           * This avoids depending on
+           * myGroups state inside this
+           * function.
+           */
+          const {
+            data:
+              membershipData,
+            error:
+              membershipError,
+          } =
+            await supabase
+              .from(
+                "group_members"
+              )
+              .select(
+                "group_id"
+              )
+              .eq(
+                "user_id",
+                currentUserId
+              );
+
+          if (
+            membershipError
+          ) {
+            console.error(
+              "Discover membership lookup error:",
+              membershipError
+            );
+          }
+
+          const myGroupIds =
+            new Set(
+              (
+                membershipData ||
+                []
+              ).map(
+                (item: any) =>
+                  item.group_id
+              )
+            );
+
+          /*
+           * Discover only active groups
+           * that the user doesn't already
+           * belong to.
+           */
+          const discoverable =
+            allGroups.filter(
+              (group) => {
+                const status =
+                  String(
+                    group.status ||
+                      ""
+                  ).toLowerCase();
+
+                return (
+                  !myGroupIds.has(
+                    group.id
+                  ) &&
+                  status ===
+                    "active"
+                );
+              }
+            );
+
+          /*
+           * Attach real verification
+           * information.
+           */
+          const enriched =
+            await attachVerification(
+              discoverable
+            );
+
+          setDiscoverGroups(
+            enriched
+          );
+        } catch (err) {
+          console.error(
+            "loadDiscoverGroups:",
+            err
           );
 
-        setDiscoverGroups(enriched);
-      } catch (err) {
-        console.error(
-          "loadDiscoverGroups:",
-          err
-        );
-
-        setDiscoverGroups([]);
-      } finally {
-        setDiscoverLoading(false);
-      }
-    },
-    [
-      supabase,
-      myGroups,
-      attachVerification,
-    ]
-  );
+          setDiscoverGroups(
+            []
+          );
+        } finally {
+          setDiscoverLoading(
+            false
+          );
+        }
+      },
+      [
+        supabase,
+        attachVerification,
+      ]
+    );
 
   /* =======================================================
      INITIAL LOAD
@@ -404,45 +635,53 @@ export default function GroupsPage() {
     return () => {
       mounted = false;
     };
-  }, [loadMyGroups]);
+  }, [
+    loadMyGroups,
+  ]);
 
   /* =======================================================
      LOAD DISCOVER AFTER MY GROUPS
   ======================================================= */
 
   useEffect(() => {
-    if (!loading && userId) {
-      loadDiscoverGroups(userId);
+    if (
+      !loading &&
+      userId
+    ) {
+      loadDiscoverGroups(
+        userId
+      );
     }
   }, [
     loading,
     userId,
-    myGroups,
     loadDiscoverGroups,
   ]);
 
   /* =======================================================
-     REFRESH WHEN USER RETURNS TO PAGE
+     REFRESH WHEN USER RETURNS
   ======================================================= */
 
   useEffect(() => {
-    const refresh = () => {
-      loadMyGroups();
-    };
+    const refresh =
+      () => {
+        loadMyGroups();
+      };
 
     window.addEventListener(
       "focus",
       refresh
     );
 
-    const visibilityHandler = () => {
-      if (
-        document.visibilityState ===
-        "visible"
-      ) {
-        refresh();
-      }
-    };
+    const visibilityHandler =
+      () => {
+        if (
+          document.visibilityState ===
+          "visible"
+        ) {
+          refresh();
+        }
+      };
 
     document.addEventListener(
       "visibilitychange",
@@ -460,7 +699,9 @@ export default function GroupsPage() {
         visibilityHandler
       );
     };
-  }, [loadMyGroups]);
+  }, [
+    loadMyGroups,
+  ]);
 
   /* =======================================================
      DISCOVER FILTERING
@@ -473,47 +714,75 @@ export default function GroupsPage() {
       ];
 
       const query =
-        search.trim().toLowerCase();
+        search
+          .trim()
+          .toLowerCase();
 
       if (query) {
-        result = result.filter(
-          (group) => {
-            const name =
-              String(
-                group.name || ""
-              ).toLowerCase();
+        result =
+          result.filter(
+            (group) => {
+              const name =
+                String(
+                  group.name ||
+                    ""
+                ).toLowerCase();
 
-            const description =
-              String(
-                group.description || ""
-              ).toLowerCase();
+              const description =
+                String(
+                  group.description ||
+                    ""
+                ).toLowerCase();
 
-            return (
-              name.includes(query) ||
-              description.includes(query)
-            );
-          }
-        );
+              const location =
+                String(
+                  group.location ||
+                    ""
+                ).toLowerCase();
+
+              return (
+                name.includes(
+                  query
+                ) ||
+                description.includes(
+                  query
+                ) ||
+                location.includes(
+                  query
+                )
+              );
+            }
+          );
       }
 
-      if (filter === "verified") {
+      if (
+        filter ===
+        "verified"
+      ) {
         result =
           result.filter(
             isVerified
           );
       }
 
-      if (filter === "active") {
+      if (
+        filter ===
+        "active"
+      ) {
         result =
           result.filter(
             (group) =>
               String(
-                group.status || ""
+                group.status ||
+                  ""
               ).toLowerCase() ===
               "active"
           );
       }
 
+      /*
+       * Verified groups first.
+       */
       result.sort(
         (a, b) =>
           Number(
@@ -544,7 +813,8 @@ export default function GroupsPage() {
     discoverGroups.filter(
       (group) =>
         String(
-          group.status || ""
+          group.status ||
+            ""
         ).toLowerCase() ===
         "active"
     ).length;
@@ -565,7 +835,8 @@ export default function GroupsPage() {
         </div>
 
         <div className="loadingSub">
-          Preparing your Kolo community view...
+          Preparing your Kolo community
+          view...
         </div>
 
         <style jsx>{`
@@ -626,17 +897,20 @@ export default function GroupsPage() {
       <header className="topbar">
 
         <div className="breadcrumbs">
-          <span>Directory</span>
+          <span>
+            Directory
+          </span>
 
           <span className="material-symbols-outlined">
             chevron_right
           </span>
 
-          <strong>Groups</strong>
+          <strong>
+            Groups
+          </strong>
         </div>
 
         <div className="searchBox">
-
           <span className="material-symbols-outlined">
             search
           </span>
@@ -662,7 +936,6 @@ export default function GroupsPage() {
               close
             </button>
           )}
-
         </div>
 
         <button
@@ -676,7 +949,6 @@ export default function GroupsPage() {
         </button>
 
       </header>
-
 
       {/* HERO */}
 
@@ -716,11 +988,11 @@ export default function GroupsPage() {
 
       </section>
 
-
       {/* ERROR */}
 
       {error && (
         <div className="errorBox">
+
           <div className="errorIcon">
             !
           </div>
@@ -738,9 +1010,9 @@ export default function GroupsPage() {
           >
             Retry
           </button>
+
         </div>
       )}
-
 
       {/* TABS */}
 
@@ -770,7 +1042,6 @@ export default function GroupsPage() {
           </b>
         </button>
 
-
         <button
           type="button"
           className={
@@ -797,7 +1068,6 @@ export default function GroupsPage() {
 
       </div>
 
-
       {/* =====================================================
           MY GROUPS
       ===================================================== */}
@@ -808,6 +1078,7 @@ export default function GroupsPage() {
           <div className="sectionHeader">
 
             <div>
+
               <div className="sectionEyebrow">
                 YOUR COMMUNITY
               </div>
@@ -820,6 +1091,7 @@ export default function GroupsPage() {
                 Your active savings communities
                 and their current status.
               </p>
+
             </div>
 
             <button
@@ -838,7 +1110,6 @@ export default function GroupsPage() {
 
           </div>
 
-
           {myGroups.length === 0 ? (
             <EmptyGroups
               isAdmin={isAdmin}
@@ -847,7 +1118,6 @@ export default function GroupsPage() {
               }
             />
           ) : (
-
             <div className="grid">
 
               {myGroups.map(
@@ -861,12 +1131,10 @@ export default function GroupsPage() {
               )}
 
             </div>
-
           )}
 
         </section>
       )}
-
 
       {/* =====================================================
           DISCOVER
@@ -896,7 +1164,6 @@ export default function GroupsPage() {
               </p>
 
             </div>
-
 
             <div className="discoverStats">
 
@@ -938,7 +1205,6 @@ export default function GroupsPage() {
 
           </div>
 
-
           {/* FILTERS */}
 
           <div className="filters">
@@ -960,12 +1226,15 @@ export default function GroupsPage() {
             <button
               type="button"
               className={
-                filter === "verified"
+                filter ===
+                "verified"
                   ? "filter active"
                   : "filter"
               }
               onClick={() =>
-                setFilter("verified")
+                setFilter(
+                  "verified"
+                )
               }
             >
               <span className="material-symbols-outlined">
@@ -991,11 +1260,9 @@ export default function GroupsPage() {
 
           </div>
 
-
           {/* DISCOVER CONTENT */}
 
           {discoverLoading ? (
-
             <div className="discoverLoading">
 
               <div className="spinner" />
@@ -1009,9 +1276,8 @@ export default function GroupsPage() {
               </span>
 
             </div>
-
-          ) : filteredDiscover.length === 0 ? (
-
+          ) : filteredDiscover.length ===
+            0 ? (
             <div className="noResults">
 
               <div className="noResultsIcon">
@@ -1044,9 +1310,7 @@ export default function GroupsPage() {
               )}
 
             </div>
-
           ) : (
-
             <div className="grid">
 
               {filteredDiscover.map(
@@ -1059,12 +1323,10 @@ export default function GroupsPage() {
               )}
 
             </div>
-
           )}
 
         </section>
       )}
-
 
       {/* TRUST NOTE */}
 
@@ -1093,7 +1355,6 @@ export default function GroupsPage() {
 
       </div>
 
-
       <style jsx global>{`
 
         * {
@@ -1105,7 +1366,6 @@ export default function GroupsPage() {
           max-width: 1280px;
           margin: 0 auto;
           padding: 0 0 60px;
-
           color: ${NAVY};
 
           font-family:
@@ -1118,24 +1378,19 @@ export default function GroupsPage() {
             sans-serif;
         }
 
-
-        /* =====================================================
-           TOP BAR
-        ===================================================== */
+        /* TOPBAR */
 
         .topbar {
           min-height: 66px;
-
           display: grid;
+
           grid-template-columns:
             1fr
             minmax(280px, 440px)
             1fr;
 
           align-items: center;
-
           gap: 20px;
-
           margin-bottom: 42px;
 
           border-bottom:
@@ -1149,7 +1404,6 @@ export default function GroupsPage() {
           gap: 6px;
 
           color: ${MUTED};
-
           font-size: 14px;
           font-weight: 600;
         }
@@ -1163,7 +1417,6 @@ export default function GroupsPage() {
           font-size: 18px;
         }
 
-
         .searchBox {
           position: relative;
         }
@@ -1171,15 +1424,12 @@ export default function GroupsPage() {
         .searchBox
         > .material-symbols-outlined {
           position: absolute;
-
           left: 14px;
           top: 50%;
-
           transform:
             translateY(-50%);
 
           color: ${MUTED};
-
           font-size: 20px;
         }
 
@@ -1196,7 +1446,6 @@ export default function GroupsPage() {
             ${BORDER};
 
           border-radius: 999px;
-
           outline: none;
 
           background: #f7f9f8;
@@ -1205,8 +1454,7 @@ export default function GroupsPage() {
           font-family: inherit;
           font-size: 14px;
 
-          transition:
-            .18s ease;
+          transition: .18s ease;
         }
 
         .searchBox input:focus {
@@ -1222,7 +1470,6 @@ export default function GroupsPage() {
 
         .searchBox button {
           position: absolute;
-
           right: 10px;
           top: 50%;
 
@@ -1230,9 +1477,7 @@ export default function GroupsPage() {
             translateY(-50%);
 
           border: 0;
-
           background: transparent;
-
           color: ${MUTED};
 
           cursor: pointer;
@@ -1252,11 +1497,13 @@ export default function GroupsPage() {
           display: grid;
           place-items: center;
 
-          border: 1.5px solid ${BORDER};
+          border:
+            1.5px solid
+            ${BORDER};
+
           border-radius: 50%;
 
           background: white;
-
           color: ${GREEN};
 
           cursor: pointer;
@@ -1267,10 +1514,7 @@ export default function GroupsPage() {
           font-size: 22px;
         }
 
-
-        /* =====================================================
-           HERO
-        ===================================================== */
+        /* HERO */
 
         .hero {
           display: flex;
@@ -1278,7 +1522,6 @@ export default function GroupsPage() {
           justify-content: space-between;
 
           gap: 30px;
-
           margin-bottom: 36px;
         }
 
@@ -1292,7 +1535,6 @@ export default function GroupsPage() {
 
           font-size: 11px;
           font-weight: 850;
-
           letter-spacing: .16em;
         }
 
@@ -1304,10 +1546,7 @@ export default function GroupsPage() {
 
           font-size: 40px;
           line-height: 1;
-
-          letter-spacing:
-            -.05em;
-
+          letter-spacing: -.05em;
           font-weight: 760;
         }
 
@@ -1368,15 +1607,11 @@ export default function GroupsPage() {
           font-size: 22px;
         }
 
-
-        /* =====================================================
-           ERROR
-        ===================================================== */
+        /* ERROR */
 
         .errorBox {
           display: flex;
           align-items: center;
-
           gap: 12px;
 
           margin-bottom: 20px;
@@ -1389,7 +1624,6 @@ export default function GroupsPage() {
           border-radius: 12px;
 
           background: #fff8eb;
-
           color: ${GOLD};
 
           font-size: 13px;
@@ -1413,7 +1647,6 @@ export default function GroupsPage() {
           margin-left: auto;
 
           border: 0;
-
           background: transparent;
 
           color: ${GOLD};
@@ -1421,20 +1654,15 @@ export default function GroupsPage() {
           cursor: pointer;
 
           font-family: inherit;
-
           font-size: 13px;
           font-weight: 800;
         }
 
-
-        /* =====================================================
-           TABS
-        ===================================================== */
+        /* TABS */
 
         .tabs {
           display: flex;
           align-items: center;
-
           gap: 2px;
 
           margin-bottom: 32px;
@@ -1449,7 +1677,6 @@ export default function GroupsPage() {
 
           display: flex;
           align-items: center;
-
           gap: 8px;
 
           padding:
@@ -1495,7 +1722,8 @@ export default function GroupsPage() {
 
           border-radius: 999px;
 
-          background: #f0f3f1;
+          background:
+            #f0f3f1;
 
           font-size: 12px;
         }
@@ -1508,10 +1736,7 @@ export default function GroupsPage() {
             ${GREEN};
         }
 
-
-        /* =====================================================
-           SECTION HEADER
-        ===================================================== */
+        /* SECTION HEADER */
 
         .sectionHeader {
           display: flex;
@@ -1531,10 +1756,7 @@ export default function GroupsPage() {
           color: ${NAVY};
 
           font-size: 26px;
-
-          letter-spacing:
-            -.035em;
-
+          letter-spacing: -.035em;
           font-weight: 760;
         }
 
@@ -1549,11 +1771,9 @@ export default function GroupsPage() {
         .discoverButton {
           display: inline-flex;
           align-items: center;
-
           gap: 6px;
 
           border: 0;
-
           background: transparent;
 
           color: ${GREEN};
@@ -1561,7 +1781,6 @@ export default function GroupsPage() {
           cursor: pointer;
 
           font-family: inherit;
-
           font-size: 14px;
           font-weight: 800;
         }
@@ -1571,10 +1790,7 @@ export default function GroupsPage() {
           font-size: 20px;
         }
 
-
-        /* =====================================================
-           DISCOVER HEADER
-        ===================================================== */
+        /* DISCOVER HEADER */
 
         .discoverHeader {
           display: flex;
@@ -1584,7 +1800,6 @@ export default function GroupsPage() {
           gap: 30px;
 
           padding: 24px;
-
           margin-bottom: 20px;
 
           border:
@@ -1611,7 +1826,6 @@ export default function GroupsPage() {
           color: ${TEXT};
 
           font-size: 14px;
-
           line-height: 1.65;
         }
 
@@ -1653,10 +1867,7 @@ export default function GroupsPage() {
             #d5e1d9;
         }
 
-
-        /* =====================================================
-           FILTERS
-        ===================================================== */
+        /* FILTERS */
 
         .filters {
           display: flex;
@@ -1689,7 +1900,6 @@ export default function GroupsPage() {
           cursor: pointer;
 
           font-family: inherit;
-
           font-size: 12px;
           font-weight: 750;
 
@@ -1717,10 +1927,7 @@ export default function GroupsPage() {
           font-size: 16px;
         }
 
-
-        /* =====================================================
-           GRID
-        ===================================================== */
+        /* GRID */
 
         .grid {
           display: grid;
@@ -1734,10 +1941,7 @@ export default function GroupsPage() {
           gap: 20px;
         }
 
-
-        /* =====================================================
-           GROUP CARD
-        ===================================================== */
+        /* GROUP CARD */
 
         .groupCardLink {
           display: block;
@@ -1880,7 +2084,6 @@ export default function GroupsPage() {
             nowrap;
         }
 
-
         /* STATUS */
 
         .status {
@@ -1911,10 +2114,7 @@ export default function GroupsPage() {
             ${MUTED};
         }
 
-
-        /* =====================================================
-           VERIFICATION
-        ===================================================== */
+        /* VERIFICATION */
 
         .verification {
           min-height: 32px;
@@ -1952,10 +2152,7 @@ export default function GroupsPage() {
           font-size: 18px;
         }
 
-
-        /* =====================================================
-           INSIGHT
-        ===================================================== */
+        /* INSIGHT */
 
         .insight {
           min-height: 48px;
@@ -1970,9 +2167,7 @@ export default function GroupsPage() {
           color: ${TEXT};
 
           font-size: 12px;
-
-          line-height:
-            1.55;
+          line-height: 1.55;
         }
 
         .insight strong {
@@ -1980,10 +2175,7 @@ export default function GroupsPage() {
             ${GREEN};
         }
 
-
-        /* =====================================================
-           STATS
-        ===================================================== */
+        /* STATS */
 
         .stats {
           display: grid;
@@ -2032,10 +2224,7 @@ export default function GroupsPage() {
             ${GREEN};
         }
 
-
-        /* =====================================================
-           CAPACITY
-        ===================================================== */
+        /* CAPACITY */
 
         .capacity {
           padding-top: 2px;
@@ -2086,10 +2275,7 @@ export default function GroupsPage() {
             width .4s ease;
         }
 
-
-        /* =====================================================
-           CARD FOOTER
-        ===================================================== */
+        /* FOOTER */
 
         .cardBottom {
           display: flex;
@@ -2153,10 +2339,7 @@ export default function GroupsPage() {
           font-size: 20px;
         }
 
-
-        /* =====================================================
-           EMPTY
-        ===================================================== */
+        /* EMPTY */
 
         .empty {
           padding:
@@ -2243,7 +2426,6 @@ export default function GroupsPage() {
           border-radius: 12px;
 
           font-family: inherit;
-
           font-size: 13px;
           font-weight: 800;
 
@@ -2270,10 +2452,7 @@ export default function GroupsPage() {
           color: white;
         }
 
-
-        /* =====================================================
-           DISCOVER LOADING
-        ===================================================== */
+        /* DISCOVER LOADING */
 
         .discoverLoading {
           min-height: 280px;
@@ -2332,10 +2511,7 @@ export default function GroupsPage() {
           }
         }
 
-
-        /* =====================================================
-           NO RESULTS
-        ===================================================== */
+        /* NO RESULTS */
 
         .noResults {
           min-height: 300px;
@@ -2430,10 +2606,7 @@ export default function GroupsPage() {
           font-weight: 800;
         }
 
-
-        /* =====================================================
-           TRUST FOOTER
-        ===================================================== */
+        /* TRUST FOOTER */
 
         .trustFooter {
           display: flex;
@@ -2485,13 +2658,9 @@ export default function GroupsPage() {
           line-height: 1.65;
         }
 
-
-        /* =====================================================
-           RESPONSIVE
-        ===================================================== */
+        /* RESPONSIVE */
 
         @media (max-width: 1050px) {
-
           .grid {
             grid-template-columns:
               repeat(
@@ -2499,12 +2668,9 @@ export default function GroupsPage() {
                 minmax(0, 1fr)
               );
           }
-
         }
 
-
         @media (max-width: 760px) {
-
           .groupsPage {
             padding:
               0 14px 45px;
@@ -2555,12 +2721,9 @@ export default function GroupsPage() {
           .discoverStats {
             width: 100%;
           }
-
         }
 
-
         @media (max-width: 480px) {
-
           .hero h1 {
             font-size: 32px;
           }
@@ -2621,15 +2784,12 @@ export default function GroupsPage() {
           .status {
             display: none;
           }
-
         }
 
       `}</style>
-
     </main>
   );
 }
-
 
 /* =========================================================
    GROUP CARD
@@ -2683,9 +2843,6 @@ function GroupCard({
         "active"
     );
 
-  const frequency =
-    "Monthly";
-
   const location =
     group.location ||
     group.city ||
@@ -2724,10 +2881,9 @@ function GroupCard({
     members >= maximum &&
     maximum > 0
   ) {
-    insight =
-      verified
-        ? "Kolo Verified · The group has reached its stated member capacity."
-        : "The group has reached its stated member capacity.";
+    insight = verified
+      ? "Kolo Verified · The group has reached its stated member capacity."
+      : "The group has reached its stated member capacity.";
   }
 
   return (
@@ -2777,7 +2933,6 @@ function GroupCard({
 
         </div>
 
-
         {/* VERIFICATION */}
 
         <div
@@ -2800,7 +2955,6 @@ function GroupCard({
 
         </div>
 
-
         {/* INSIGHT */}
 
         <div className="insight">
@@ -2812,7 +2966,6 @@ function GroupCard({
           {insight}
 
         </div>
-
 
         {/* STATS */}
 
@@ -2832,7 +2985,6 @@ function GroupCard({
 
           </div>
 
-
           <div className="stat">
 
             <span>
@@ -2849,7 +3001,6 @@ function GroupCard({
 
           </div>
 
-
           <div className="stat">
 
             <span>
@@ -2857,11 +3008,12 @@ function GroupCard({
             </span>
 
             <strong className="money">
-              {formatNaira(pool)}
+              {formatNaira(
+                pool
+              )}
             </strong>
 
           </div>
-
 
           <div className="stat">
 
@@ -2878,7 +3030,6 @@ function GroupCard({
           </div>
 
         </div>
-
 
         {/* CAPACITY */}
 
@@ -2910,7 +3061,6 @@ function GroupCard({
 
         </div>
 
-
         {/* FOOTER */}
 
         <div className="cardBottom">
@@ -2927,7 +3077,6 @@ function GroupCard({
 
           </div>
 
-
           <div className="arrow">
 
             <span className="material-symbols-outlined">
@@ -2942,7 +3091,6 @@ function GroupCard({
     </Link>
   );
 }
-
 
 /* =========================================================
    EMPTY STATE
@@ -2986,7 +3134,9 @@ function EmptyGroups({
         </button>
 
         {isAdmin && (
-          <Link href="/groups/create">
+          <Link
+            href="/groups/create"
+          >
             Create group
           </Link>
         )}
@@ -2996,6 +3146,3006 @@ function EmptyGroups({
     </div>
   );
 }
+
+
+// "use client";
+
+// import Link from "next/link";
+// import {
+//   useCallback,
+//   useEffect,
+//   useMemo,
+//   useState,
+// } from "react";
+
+// import { createClient } from "@/lib/supabase/client";
+
+// /* =========================================================
+//    TYPES
+// ========================================================= */
+
+// type Group = {
+//   verification_status: string;
+//   verified_at(verified_at: any): boolean;
+//   id: string;
+//   name: string;
+//   description?: string | null;
+
+//   pool_amount?: number | string | null;
+//   member_count?: number | string | null;
+//   max_members?: number | string | null;
+
+//   status?: string | null;
+//   cycle_number?: number | string | null;
+
+//   contribution_amount?: number | string | null;
+
+//   next_due_date?: string | null;
+//   next_payout_date?: string | null;
+//   last_payout_date?: string | null;
+
+//   location?: string | null;
+//   city?: string | null;
+//   state?: string | null;
+
+//   created_at?: string | null;
+// };
+
+// type Membership = {
+//   group_id: string;
+//   role?: string | null;
+//   groups: Group | null;
+// };
+
+// type Verification = {
+//   group_id: string;
+//   status?: string | null;
+//   verified_at?: string | null;
+//   cooperative_location?: string | null;
+// };
+
+// type Tab = "mine" | "discover";
+// type Filter = "all" | "verified" | "active";
+
+// /* =========================================================
+//    CONSTANTS
+// ========================================================= */
+
+// const GREEN = "#006b2c";
+// const GREEN_DARK = "#005522";
+// const GREEN_SOFT = "#edf7f0";
+
+// const NAVY = "#0b1c30";
+// const TEXT = "#3e4a3d";
+// const MUTED = "#6e7b6c";
+
+// const BORDER = "#e4e9e6";
+// const GOLD = "#825100";
+
+// /* =========================================================
+//    HELPERS
+// ========================================================= */
+
+// function formatNaira(value: number | string | null | undefined) {
+//   const amount = Number(value || 0);
+
+//   return `₦${amount.toLocaleString("en-NG", {
+//     maximumFractionDigits: 0,
+//   })}`;
+// }
+
+// function numberValue(value: number | string | null | undefined) {
+//   return Number(value || 0);
+// }
+
+// function isVerified(group: Group) {
+//   return (
+//     String(group.verification_status || "").toLowerCase() ===
+//       "verified" ||
+//     Boolean(group.verified_at)
+//   );
+// }
+
+// /* =========================================================
+//    PAGE
+// ========================================================= */
+
+// export default function GroupsPage() {
+//   const supabase = createClient();
+
+//   const [userId, setUserId] = useState<string>("");
+
+//   const [myGroups, setMyGroups] = useState<Group[]>([]);
+//   const [discoverGroups, setDiscoverGroups] = useState<Group[]>([]);
+
+//   const [loading, setLoading] = useState(true);
+//   const [discoverLoading, setDiscoverLoading] = useState(true);
+
+//   const [isAdmin, setIsAdmin] = useState(false);
+
+//   const [tab, setTab] = useState<Tab>("mine");
+//   const [filter, setFilter] = useState<Filter>("all");
+//   const [search, setSearch] = useState("");
+
+//   const [error, setError] = useState("");
+
+//   /* =======================================================
+//      VERIFICATION ENRICHMENT
+//   ======================================================= */
+
+//   const attachVerification = useCallback(
+//     async (groups: Group[]) => {
+//       if (!groups.length) return groups;
+
+//       const ids = groups.map((group) => group.id);
+
+//       const { data, error: verificationError } =
+//         await supabase
+//           .from("verification_submissions")
+//           .select(
+//             `
+//               group_id,
+//               status,
+//               verified_at,
+//               cooperative_location
+//             `
+//           )
+//           .in("group_id", ids)
+//           .order("verified_at", {
+//             ascending: false,
+//           });
+
+//       if (verificationError) {
+//         console.warn(
+//           "Verification lookup:",
+//           verificationError.message
+//         );
+
+//         return groups;
+//       }
+
+//       const verificationMap = new Map<
+//         string,
+//         Verification
+//       >();
+
+//       (data || []).forEach((item) => {
+//         const verification =
+//           item as Verification;
+
+//         if (!verificationMap.has(verification.group_id)) {
+//           verificationMap.set(
+//             verification.group_id,
+//             verification
+//           );
+//         }
+//       });
+
+//       return groups.map((group) => {
+//         const verification =
+//           verificationMap.get(group.id);
+
+//         return {
+//           ...group,
+
+//           verification_status:
+//             verification?.status || null,
+
+//           verified_at:
+//             verification?.verified_at || null,
+
+//           location:
+//             group.location ||
+//             group.city ||
+//             group.state ||
+//             verification?.cooperative_location ||
+//             null,
+//         };
+//       });
+//     },
+//     [supabase]
+//   );
+
+//   /* =======================================================
+//      LOAD CURRENT USER + MY GROUPS
+//   ======================================================= */
+
+//   const loadMyGroups = useCallback(async () => {
+//     try {
+//       setError("");
+
+//       const {
+//         data: { user },
+//       } = await supabase.auth.getUser();
+
+//       if (!user) {
+//         window.location.href = "/login";
+//         return;
+//       }
+
+//       setUserId(user.id);
+
+//       const {
+//         data,
+//         error: membershipError,
+//       } = await supabase
+//         .from("group_members")
+//         .select(
+//           `
+//             group_id,
+//             role,
+//             groups(*)
+//           `
+//         )
+//         .eq("user_id", user.id);
+
+//       if (membershipError) {
+//         console.error(
+//           "Group membership error:",
+//           membershipError
+//         );
+
+//         setError(
+//           "We couldn't load your groups. Please try again."
+//         );
+
+//         return;
+//       }
+
+//       const memberships =
+//         (data || []) as unknown as Membership[];
+
+//       const groups = memberships
+//         .map((item) => item.groups)
+//         .filter(Boolean) as Group[];
+
+//       const enriched =
+//         await attachVerification(groups);
+
+//       setMyGroups(enriched);
+
+//       const admin =
+//         memberships.some((membership) => {
+//           const role =
+//             String(
+//               membership.role || ""
+//             ).toLowerCase();
+
+//           return [
+//             "admin",
+//             "administrator",
+//             "owner",
+//             "treasurer",
+//           ].includes(role);
+//         });
+
+//       setIsAdmin(admin);
+//     } catch (err) {
+//       console.error(
+//         "loadMyGroups:",
+//         err
+//       );
+
+//       setError(
+//         "Something went wrong while loading your groups."
+//       );
+//     }
+//   }, [
+//     supabase,
+//     attachVerification,
+//   ]);
+
+//   /* =======================================================
+//      LOAD DISCOVERABLE GROUPS
+//   ======================================================= */
+
+//   const loadDiscoverGroups = useCallback(
+//     async (currentUserId: string) => {
+//       try {
+//         setDiscoverLoading(true);
+
+//         const {
+//           data,
+//           error: groupsError,
+//         } = await supabase
+//           .from("groups")
+//           .select(
+//             `
+//               id,
+//               name,
+//               description,
+//               pool_amount,
+//               member_count,
+//               max_members,
+//               status,
+//               cycle_number,
+//               contribution_amount,
+//               next_due_date,
+//               next_payout_date,
+//               last_payout_date,
+//               created_at
+//             `
+//           )
+//           .neq("status", "archived")
+//           .order("created_at", {
+//             ascending: false,
+//           })
+//           .limit(100);
+
+//         if (groupsError) {
+//           console.error(
+//             "Discover groups error:",
+//             groupsError
+//           );
+
+//           setDiscoverGroups([]);
+
+//           return;
+//         }
+
+//         const allGroups =
+//           (data || []) as Group[];
+
+//         const myGroupIds =
+//           new Set(
+//             myGroups.map(
+//               (group) => group.id
+//             )
+//           );
+
+//         const discoverable =
+//           allGroups.filter((group) => {
+//             const status =
+//               String(
+//                 group.status || ""
+//               ).toLowerCase();
+
+//             return (
+//               !myGroupIds.has(group.id) &&
+//               status === "active"
+//             );
+//           });
+
+//         const enriched =
+//           await attachVerification(
+//             discoverable
+//           );
+
+//         setDiscoverGroups(enriched);
+//       } catch (err) {
+//         console.error(
+//           "loadDiscoverGroups:",
+//           err
+//         );
+
+//         setDiscoverGroups([]);
+//       } finally {
+//         setDiscoverLoading(false);
+//       }
+//     },
+//     [
+//       supabase,
+//       myGroups,
+//       attachVerification,
+//     ]
+//   );
+
+//   /* =======================================================
+//      INITIAL LOAD
+//   ======================================================= */
+
+//   useEffect(() => {
+//     let mounted = true;
+
+//     async function initialise() {
+//       if (!mounted) return;
+
+//       setLoading(true);
+
+//       await loadMyGroups();
+
+//       if (mounted) {
+//         setLoading(false);
+//       }
+//     }
+
+//     initialise();
+
+//     return () => {
+//       mounted = false;
+//     };
+//   }, [loadMyGroups]);
+
+//   /* =======================================================
+//      LOAD DISCOVER AFTER MY GROUPS
+//   ======================================================= */
+
+//   useEffect(() => {
+//     if (!loading && userId) {
+//       loadDiscoverGroups(userId);
+//     }
+//   }, [
+//     loading,
+//     userId,
+//     myGroups,
+//     loadDiscoverGroups,
+//   ]);
+
+//   /* =======================================================
+//      REFRESH WHEN USER RETURNS TO PAGE
+//   ======================================================= */
+
+//   useEffect(() => {
+//     const refresh = () => {
+//       loadMyGroups();
+//     };
+
+//     window.addEventListener(
+//       "focus",
+//       refresh
+//     );
+
+//     const visibilityHandler = () => {
+//       if (
+//         document.visibilityState ===
+//         "visible"
+//       ) {
+//         refresh();
+//       }
+//     };
+
+//     document.addEventListener(
+//       "visibilitychange",
+//       visibilityHandler
+//     );
+
+//     return () => {
+//       window.removeEventListener(
+//         "focus",
+//         refresh
+//       );
+
+//       document.removeEventListener(
+//         "visibilitychange",
+//         visibilityHandler
+//       );
+//     };
+//   }, [loadMyGroups]);
+
+//   /* =======================================================
+//      DISCOVER FILTERING
+//   ======================================================= */
+
+//   const filteredDiscover =
+//     useMemo(() => {
+//       let result = [
+//         ...discoverGroups,
+//       ];
+
+//       const query =
+//         search.trim().toLowerCase();
+
+//       if (query) {
+//         result = result.filter(
+//           (group) => {
+//             const name =
+//               String(
+//                 group.name || ""
+//               ).toLowerCase();
+
+//             const description =
+//               String(
+//                 group.description || ""
+//               ).toLowerCase();
+
+//             return (
+//               name.includes(query) ||
+//               description.includes(query)
+//             );
+//           }
+//         );
+//       }
+
+//       if (filter === "verified") {
+//         result =
+//           result.filter(
+//             isVerified
+//           );
+//       }
+
+//       if (filter === "active") {
+//         result =
+//           result.filter(
+//             (group) =>
+//               String(
+//                 group.status || ""
+//               ).toLowerCase() ===
+//               "active"
+//           );
+//       }
+
+//       result.sort(
+//         (a, b) =>
+//           Number(
+//             isVerified(b)
+//           ) -
+//           Number(
+//             isVerified(a)
+//           )
+//       );
+
+//       return result;
+//     }, [
+//       discoverGroups,
+//       search,
+//       filter,
+//     ]);
+
+//   /* =======================================================
+//      SUMMARY
+//   ======================================================= */
+
+//   const verifiedDiscoverCount =
+//     discoverGroups.filter(
+//       isVerified
+//     ).length;
+
+//   const activeDiscoverCount =
+//     discoverGroups.filter(
+//       (group) =>
+//         String(
+//           group.status || ""
+//         ).toLowerCase() ===
+//         "active"
+//     ).length;
+
+//   /* =======================================================
+//      LOADING
+//   ======================================================= */
+
+//   if (loading) {
+//     return (
+//       <div className="groupsLoading">
+//         <div className="loadingMark">
+//           K
+//         </div>
+
+//         <div className="loadingTitle">
+//           Loading your groups
+//         </div>
+
+//         <div className="loadingSub">
+//           Preparing your Kolo community view...
+//         </div>
+
+//         <style jsx>{`
+//           .groupsLoading {
+//             min-height: 65vh;
+//             display: flex;
+//             flex-direction: column;
+//             align-items: center;
+//             justify-content: center;
+//             color: ${MUTED};
+//             font-family:
+//               Inter,
+//               Geist,
+//               system-ui,
+//               sans-serif;
+//           }
+
+//           .loadingMark {
+//             width: 56px;
+//             height: 56px;
+//             display: grid;
+//             place-items: center;
+//             margin-bottom: 20px;
+//             border-radius: 16px;
+//             background: ${GREEN};
+//             color: white;
+//             font-size: 24px;
+//             font-weight: 850;
+//             box-shadow:
+//               0 12px 28px
+//               rgba(0, 107, 44, .15);
+//           }
+
+//           .loadingTitle {
+//             color: ${NAVY};
+//             font-size: 20px;
+//             font-weight: 750;
+//           }
+
+//           .loadingSub {
+//             margin-top: 8px;
+//             font-size: 14px;
+//           }
+//         `}</style>
+//       </div>
+//     );
+//   }
+
+//   /* =======================================================
+//      PAGE
+//   ======================================================= */
+
+//   return (
+//     <main className="groupsPage">
+
+//       {/* TOP BAR */}
+
+//       <header className="topbar">
+
+//         <div className="breadcrumbs">
+//           <span>Directory</span>
+
+//           <span className="material-symbols-outlined">
+//             chevron_right
+//           </span>
+
+//           <strong>Groups</strong>
+//         </div>
+
+//         <div className="searchBox">
+
+//           <span className="material-symbols-outlined">
+//             search
+//           </span>
+
+//           <input
+//             value={search}
+//             onChange={(event) =>
+//               setSearch(
+//                 event.target.value
+//               )
+//             }
+//             placeholder="Search groups..."
+//           />
+
+//           {search && (
+//             <button
+//               type="button"
+//               onClick={() =>
+//                 setSearch("")
+//               }
+//               aria-label="Clear search"
+//             >
+//               close
+//             </button>
+//           )}
+
+//         </div>
+
+//         <button
+//           type="button"
+//           className="notificationButton"
+//           aria-label="Notifications"
+//         >
+//           <span className="material-symbols-outlined">
+//             notifications
+//           </span>
+//         </button>
+
+//       </header>
+
+
+//       {/* HERO */}
+
+//       <section className="hero">
+
+//         <div className="heroContent">
+
+//           <div className="eyebrow">
+//             KOLO COMMUNITY
+//           </div>
+
+//           <h1>
+//             Savings groups
+//           </h1>
+
+//           <p>
+//             Stay connected to the communities
+//             you're saving with and discover
+//             groups that may fit your savings
+//             journey.
+//           </p>
+
+//         </div>
+
+//         {isAdmin && (
+//           <Link
+//             href="/groups/create"
+//             className="createButton"
+//           >
+//             <span className="material-symbols-outlined">
+//               add
+//             </span>
+
+//             Create group
+//           </Link>
+//         )}
+
+//       </section>
+
+
+//       {/* ERROR */}
+
+//       {error && (
+//         <div className="errorBox">
+//           <div className="errorIcon">
+//             !
+//           </div>
+
+//           <span>
+//             {error}
+//           </span>
+
+//           <button
+//             type="button"
+//             onClick={() => {
+//               setError("");
+//               loadMyGroups();
+//             }}
+//           >
+//             Retry
+//           </button>
+//         </div>
+//       )}
+
+
+//       {/* TABS */}
+
+//       <div className="tabs">
+
+//         <button
+//           type="button"
+//           className={
+//             tab === "mine"
+//               ? "tab active"
+//               : "tab"
+//           }
+//           onClick={() =>
+//             setTab("mine")
+//           }
+//         >
+//           <span className="material-symbols-outlined">
+//             groups
+//           </span>
+
+//           <span>
+//             My Groups
+//           </span>
+
+//           <b>
+//             {myGroups.length}
+//           </b>
+//         </button>
+
+
+//         <button
+//           type="button"
+//           className={
+//             tab === "discover"
+//               ? "tab active"
+//               : "tab"
+//           }
+//           onClick={() =>
+//             setTab("discover")
+//           }
+//         >
+//           <span className="material-symbols-outlined">
+//             explore
+//           </span>
+
+//           <span>
+//             Discover
+//           </span>
+
+//           <b>
+//             {discoverGroups.length}
+//           </b>
+//         </button>
+
+//       </div>
+
+
+//       {/* =====================================================
+//           MY GROUPS
+//       ===================================================== */}
+
+//       {tab === "mine" && (
+//         <section>
+
+//           <div className="sectionHeader">
+
+//             <div>
+//               <div className="sectionEyebrow">
+//                 YOUR COMMUNITY
+//               </div>
+
+//               <h2>
+//                 Groups you belong to
+//               </h2>
+
+//               <p>
+//                 Your active savings communities
+//                 and their current status.
+//               </p>
+//             </div>
+
+//             <button
+//               type="button"
+//               className="discoverButton"
+//               onClick={() =>
+//                 setTab("discover")
+//               }
+//             >
+//               Discover groups
+
+//               <span className="material-symbols-outlined">
+//                 arrow_forward
+//               </span>
+//             </button>
+
+//           </div>
+
+
+//           {myGroups.length === 0 ? (
+//             <EmptyGroups
+//               isAdmin={isAdmin}
+//               onDiscover={() =>
+//                 setTab("discover")
+//               }
+//             />
+//           ) : (
+
+//             <div className="grid">
+
+//               {myGroups.map(
+//                 (group) => (
+//                   <GroupCard
+//                     key={group.id}
+//                     group={group}
+//                     mine
+//                   />
+//                 )
+//               )}
+
+//             </div>
+
+//           )}
+
+//         </section>
+//       )}
+
+
+//       {/* =====================================================
+//           DISCOVER
+//       ===================================================== */}
+
+//       {tab === "discover" && (
+//         <section>
+
+//           <div className="discoverHeader">
+
+//             <div className="discoverCopy">
+
+//               <div className="sectionEyebrow">
+//                 DISCOVER
+//               </div>
+
+//               <h2>
+//                 Find a savings community
+//               </h2>
+
+//               <p>
+//                 Explore active groups beyond
+//                 the communities you already
+//                 belong to. Review the group's
+//                 information and Kolo trust
+//                 status before making decisions.
+//               </p>
+
+//             </div>
+
+
+//             <div className="discoverStats">
+
+//               <div className="discoverStat">
+//                 <strong>
+//                   {discoverGroups.length}
+//                 </strong>
+
+//                 <span>
+//                   Groups
+//                 </span>
+//               </div>
+
+//               <div className="discoverDivider" />
+
+//               <div className="discoverStat">
+//                 <strong>
+//                   {verifiedDiscoverCount}
+//                 </strong>
+
+//                 <span>
+//                   Verified
+//                 </span>
+//               </div>
+
+//               <div className="discoverDivider" />
+
+//               <div className="discoverStat">
+//                 <strong>
+//                   {activeDiscoverCount}
+//                 </strong>
+
+//                 <span>
+//                   Active
+//                 </span>
+//               </div>
+
+//             </div>
+
+//           </div>
+
+
+//           {/* FILTERS */}
+
+//           <div className="filters">
+
+//             <button
+//               type="button"
+//               className={
+//                 filter === "all"
+//                   ? "filter active"
+//                   : "filter"
+//               }
+//               onClick={() =>
+//                 setFilter("all")
+//               }
+//             >
+//               All groups
+//             </button>
+
+//             <button
+//               type="button"
+//               className={
+//                 filter === "verified"
+//                   ? "filter active"
+//                   : "filter"
+//               }
+//               onClick={() =>
+//                 setFilter("verified")
+//               }
+//             >
+//               <span className="material-symbols-outlined">
+//                 verified
+//               </span>
+
+//               Kolo Verified
+//             </button>
+
+//             <button
+//               type="button"
+//               className={
+//                 filter === "active"
+//                   ? "filter active"
+//                   : "filter"
+//               }
+//               onClick={() =>
+//                 setFilter("active")
+//               }
+//             >
+//               Active
+//             </button>
+
+//           </div>
+
+
+//           {/* DISCOVER CONTENT */}
+
+//           {discoverLoading ? (
+
+//             <div className="discoverLoading">
+
+//               <div className="spinner" />
+
+//               <strong>
+//                 Finding groups
+//               </strong>
+
+//               <span>
+//                 Checking available communities...
+//               </span>
+
+//             </div>
+
+//           ) : filteredDiscover.length === 0 ? (
+
+//             <div className="noResults">
+
+//               <div className="noResultsIcon">
+//                 <span className="material-symbols-outlined">
+//                   search_off
+//                 </span>
+//               </div>
+
+//               <h3>
+//                 No groups found
+//               </h3>
+
+//               <p>
+//                 Try a different search or
+//                 filter. New communities will
+//                 appear here when available.
+//               </p>
+
+//               {(search ||
+//                 filter !== "all") && (
+//                 <button
+//                   type="button"
+//                   onClick={() => {
+//                     setSearch("");
+//                     setFilter("all");
+//                   }}
+//                 >
+//                   Clear filters
+//                 </button>
+//               )}
+
+//             </div>
+
+//           ) : (
+
+//             <div className="grid">
+
+//               {filteredDiscover.map(
+//                 (group) => (
+//                   <GroupCard
+//                     key={group.id}
+//                     group={group}
+//                   />
+//                 )
+//               )}
+
+//             </div>
+
+//           )}
+
+//         </section>
+//       )}
+
+
+//       {/* TRUST NOTE */}
+
+//       <div className="trustFooter">
+
+//         <span className="material-symbols-outlined">
+//           verified_user
+//         </span>
+
+//         <div>
+
+//           <strong>
+//             Understanding Kolo Verification
+//           </strong>
+
+//           <p>
+//             Kolo Verified means the group's
+//             submitted cooperative and
+//             administrator information has
+//             completed Kolo's review process.
+//             It is a trust signal, not a guarantee
+//             against financial loss.
+//           </p>
+
+//         </div>
+
+//       </div>
+
+
+//       <style jsx global>{`
+
+//         * {
+//           box-sizing: border-box;
+//         }
+
+//         .groupsPage {
+//           width: 100%;
+//           max-width: 1280px;
+//           margin: 0 auto;
+//           padding: 0 0 60px;
+
+//           color: ${NAVY};
+
+//           font-family:
+//             Inter,
+//             Geist,
+//             system-ui,
+//             -apple-system,
+//             BlinkMacSystemFont,
+//             "Segoe UI",
+//             sans-serif;
+//         }
+
+
+//         /* =====================================================
+//            TOP BAR
+//         ===================================================== */
+
+//         .topbar {
+//           min-height: 66px;
+
+//           display: grid;
+//           grid-template-columns:
+//             1fr
+//             minmax(280px, 440px)
+//             1fr;
+
+//           align-items: center;
+
+//           gap: 20px;
+
+//           margin-bottom: 42px;
+
+//           border-bottom:
+//             1px solid
+//             rgba(189, 202, 186, .35);
+//         }
+
+//         .breadcrumbs {
+//           display: flex;
+//           align-items: center;
+//           gap: 6px;
+
+//           color: ${MUTED};
+
+//           font-size: 14px;
+//           font-weight: 600;
+//         }
+
+//         .breadcrumbs strong {
+//           color: ${GREEN};
+//         }
+
+//         .breadcrumbs
+//         .material-symbols-outlined {
+//           font-size: 18px;
+//         }
+
+
+//         .searchBox {
+//           position: relative;
+//         }
+
+//         .searchBox
+//         > .material-symbols-outlined {
+//           position: absolute;
+
+//           left: 14px;
+//           top: 50%;
+
+//           transform:
+//             translateY(-50%);
+
+//           color: ${MUTED};
+
+//           font-size: 20px;
+//         }
+
+//         .searchBox input {
+//           width: 100%;
+//           height: 44px;
+
+//           padding:
+//             0 40px
+//             0 42px;
+
+//           border:
+//             1.5px solid
+//             ${BORDER};
+
+//           border-radius: 999px;
+
+//           outline: none;
+
+//           background: #f7f9f8;
+//           color: ${NAVY};
+
+//           font-family: inherit;
+//           font-size: 14px;
+
+//           transition:
+//             .18s ease;
+//         }
+
+//         .searchBox input:focus {
+//           background: white;
+
+//           border-color:
+//             #9bc4a9;
+
+//           box-shadow:
+//             0 0 0 3px
+//             ${GREEN_SOFT};
+//         }
+
+//         .searchBox button {
+//           position: absolute;
+
+//           right: 10px;
+//           top: 50%;
+
+//           transform:
+//             translateY(-50%);
+
+//           border: 0;
+
+//           background: transparent;
+
+//           color: ${MUTED};
+
+//           cursor: pointer;
+
+//           font-family:
+//             "Material Symbols Outlined";
+
+//           font-size: 20px;
+//         }
+
+//         .notificationButton {
+//           justify-self: end;
+
+//           width: 44px;
+//           height: 44px;
+
+//           display: grid;
+//           place-items: center;
+
+//           border: 1.5px solid ${BORDER};
+//           border-radius: 50%;
+
+//           background: white;
+
+//           color: ${GREEN};
+
+//           cursor: pointer;
+//         }
+
+//         .notificationButton
+//         .material-symbols-outlined {
+//           font-size: 22px;
+//         }
+
+
+//         /* =====================================================
+//            HERO
+//         ===================================================== */
+
+//         .hero {
+//           display: flex;
+//           align-items: flex-end;
+//           justify-content: space-between;
+
+//           gap: 30px;
+
+//           margin-bottom: 36px;
+//         }
+
+//         .heroContent {
+//           max-width: 720px;
+//         }
+
+//         .eyebrow,
+//         .sectionEyebrow {
+//           color: ${GREEN};
+
+//           font-size: 11px;
+//           font-weight: 850;
+
+//           letter-spacing: .16em;
+//         }
+
+//         .hero h1 {
+//           margin:
+//             12px 0 12px;
+
+//           color: ${NAVY};
+
+//           font-size: 40px;
+//           line-height: 1;
+
+//           letter-spacing:
+//             -.05em;
+
+//           font-weight: 760;
+//         }
+
+//         .hero p {
+//           max-width: 680px;
+
+//           margin: 0;
+
+//           color: ${TEXT};
+
+//           font-size: 15px;
+//           line-height: 1.7;
+//         }
+
+//         .createButton {
+//           min-height: 48px;
+
+//           display: inline-flex;
+//           align-items: center;
+//           justify-content: center;
+
+//           gap: 8px;
+
+//           padding:
+//             0 22px;
+
+//           border-radius: 999px;
+
+//           background: ${GREEN};
+//           color: white;
+
+//           text-decoration: none;
+
+//           font-size: 14px;
+//           font-weight: 750;
+
+//           white-space: nowrap;
+
+//           transition:
+//             transform .18s ease,
+//             background .18s ease,
+//             box-shadow .18s ease;
+//         }
+
+//         .createButton:hover {
+//           background: ${GREEN_DARK};
+
+//           transform:
+//             translateY(-2px);
+
+//           box-shadow:
+//             0 12px 24px
+//             rgba(0, 107, 44, .18);
+//         }
+
+//         .createButton
+//         .material-symbols-outlined {
+//           font-size: 22px;
+//         }
+
+
+//         /* =====================================================
+//            ERROR
+//         ===================================================== */
+
+//         .errorBox {
+//           display: flex;
+//           align-items: center;
+
+//           gap: 12px;
+
+//           margin-bottom: 20px;
+//           padding: 14px 16px;
+
+//           border:
+//             1px solid
+//             #eadfbd;
+
+//           border-radius: 12px;
+
+//           background: #fff8eb;
+
+//           color: ${GOLD};
+
+//           font-size: 13px;
+//         }
+
+//         .errorIcon {
+//           width: 24px;
+//           height: 24px;
+
+//           display: grid;
+//           place-items: center;
+
+//           border-radius: 50%;
+
+//           background: #f1e4bf;
+
+//           font-weight: 800;
+//         }
+
+//         .errorBox button {
+//           margin-left: auto;
+
+//           border: 0;
+
+//           background: transparent;
+
+//           color: ${GOLD};
+
+//           cursor: pointer;
+
+//           font-family: inherit;
+
+//           font-size: 13px;
+//           font-weight: 800;
+//         }
+
+
+//         /* =====================================================
+//            TABS
+//         ===================================================== */
+
+//         .tabs {
+//           display: flex;
+//           align-items: center;
+
+//           gap: 2px;
+
+//           margin-bottom: 32px;
+
+//           border-bottom:
+//             1px solid
+//             ${BORDER};
+//         }
+
+//         .tab {
+//           min-height: 52px;
+
+//           display: flex;
+//           align-items: center;
+
+//           gap: 8px;
+
+//           padding:
+//             0 18px;
+
+//           margin-bottom: -1px;
+
+//           border: 0;
+
+//           border-bottom:
+//             2px solid
+//             transparent;
+
+//           background: transparent;
+
+//           color: ${MUTED};
+
+//           cursor: pointer;
+
+//           font-family: inherit;
+
+//           font-size: 14px;
+//           font-weight: 750;
+//         }
+
+//         .tab.active {
+//           color: ${GREEN};
+
+//           border-bottom-color:
+//             ${GREEN};
+//         }
+
+//         .tab
+//         .material-symbols-outlined {
+//           font-size: 22px;
+//         }
+
+//         .tab b {
+//           min-width: 24px;
+
+//           padding:
+//             4px 8px;
+
+//           border-radius: 999px;
+
+//           background: #f0f3f1;
+
+//           font-size: 12px;
+//         }
+
+//         .tab.active b {
+//           background:
+//             ${GREEN_SOFT};
+
+//           color:
+//             ${GREEN};
+//         }
+
+
+//         /* =====================================================
+//            SECTION HEADER
+//         ===================================================== */
+
+//         .sectionHeader {
+//           display: flex;
+//           align-items: flex-end;
+//           justify-content: space-between;
+
+//           gap: 20px;
+
+//           margin-bottom: 20px;
+//         }
+
+//         .sectionHeader h2,
+//         .discoverHeader h2 {
+//           margin:
+//             8px 0 8px;
+
+//           color: ${NAVY};
+
+//           font-size: 26px;
+
+//           letter-spacing:
+//             -.035em;
+
+//           font-weight: 760;
+//         }
+
+//         .sectionHeader p {
+//           margin: 0;
+
+//           color: ${MUTED};
+
+//           font-size: 14px;
+//         }
+
+//         .discoverButton {
+//           display: inline-flex;
+//           align-items: center;
+
+//           gap: 6px;
+
+//           border: 0;
+
+//           background: transparent;
+
+//           color: ${GREEN};
+
+//           cursor: pointer;
+
+//           font-family: inherit;
+
+//           font-size: 14px;
+//           font-weight: 800;
+//         }
+
+//         .discoverButton
+//         .material-symbols-outlined {
+//           font-size: 20px;
+//         }
+
+
+//         /* =====================================================
+//            DISCOVER HEADER
+//         ===================================================== */
+
+//         .discoverHeader {
+//           display: flex;
+//           align-items: center;
+//           justify-content: space-between;
+
+//           gap: 30px;
+
+//           padding: 24px;
+
+//           margin-bottom: 20px;
+
+//           border:
+//             1px solid
+//             #dcebe1;
+
+//           border-radius: 16px;
+
+//           background:
+//             linear-gradient(
+//               135deg,
+//               #f0f8f3,
+//               #f8fbf9
+//             );
+//         }
+
+//         .discoverCopy {
+//           max-width: 650px;
+//         }
+
+//         .discoverHeader p {
+//           margin: 0;
+
+//           color: ${TEXT};
+
+//           font-size: 14px;
+
+//           line-height: 1.65;
+//         }
+
+//         .discoverStats {
+//           display: flex;
+//           align-items: center;
+
+//           gap: 20px;
+
+//           flex-shrink: 0;
+//         }
+
+//         .discoverStat {
+//           display: flex;
+//           flex-direction: column;
+
+//           gap: 6px;
+//         }
+
+//         .discoverStat strong {
+//           color: ${NAVY};
+
+//           font-size: 24px;
+//           line-height: 1;
+//         }
+
+//         .discoverStat span {
+//           color: ${MUTED};
+
+//           font-size: 12px;
+//           font-weight: 700;
+//         }
+
+//         .discoverDivider {
+//           width: 1px;
+//           height: 36px;
+
+//           background:
+//             #d5e1d9;
+//         }
+
+
+//         /* =====================================================
+//            FILTERS
+//         ===================================================== */
+
+//         .filters {
+//           display: flex;
+//           align-items: center;
+
+//           gap: 8px;
+
+//           margin-bottom: 24px;
+//         }
+
+//         .filter {
+//           display: inline-flex;
+//           align-items: center;
+
+//           gap: 6px;
+
+//           padding:
+//             10px 16px;
+
+//           border:
+//             1.5px solid
+//             ${BORDER};
+
+//           border-radius: 999px;
+
+//           background: white;
+
+//           color: ${MUTED};
+
+//           cursor: pointer;
+
+//           font-family: inherit;
+
+//           font-size: 12px;
+//           font-weight: 750;
+
+//           transition:
+//             .16s ease;
+//         }
+
+//         .filter:hover {
+//           border-color:
+//             #bfd2c5;
+//         }
+
+//         .filter.active {
+//           border-color:
+//             ${GREEN};
+
+//           background:
+//             ${GREEN};
+
+//           color: white;
+//         }
+
+//         .filter
+//         .material-symbols-outlined {
+//           font-size: 16px;
+//         }
+
+
+//         /* =====================================================
+//            GRID
+//         ===================================================== */
+
+//         .grid {
+//           display: grid;
+
+//           grid-template-columns:
+//             repeat(
+//               3,
+//               minmax(0, 1fr)
+//             );
+
+//           gap: 20px;
+//         }
+
+
+//         /* =====================================================
+//            GROUP CARD
+//         ===================================================== */
+
+//         .groupCardLink {
+//           display: block;
+
+//           height: 100%;
+
+//           color: inherit;
+
+//           text-decoration: none;
+//         }
+
+//         .groupCard {
+//           height: 100%;
+
+//           display: flex;
+//           flex-direction: column;
+
+//           gap: 14px;
+
+//           padding: 20px;
+
+//           border:
+//             1px solid
+//             ${BORDER};
+
+//           border-radius: 16px;
+
+//           background: white;
+
+//           box-shadow:
+//             0 5px 20px
+//             rgba(
+//               15,
+//               23,
+//               42,
+//               .025
+//             );
+
+//           transition:
+//             transform .18s ease,
+//             box-shadow .18s ease,
+//             border-color .18s ease;
+//         }
+
+//         .groupCard:hover {
+//           transform:
+//             translateY(-3px);
+
+//           border-color:
+//             #c6dacd;
+
+//           box-shadow:
+//             0 16px 36px
+//             rgba(
+//               15,
+//               23,
+//               42,
+//               .08
+//             );
+//         }
+
+//         .cardTop {
+//           display: flex;
+//           align-items: flex-start;
+//           justify-content: space-between;
+
+//           gap: 12px;
+//         }
+
+//         .identity {
+//           min-width: 0;
+
+//           display: flex;
+//           align-items: center;
+
+//           gap: 12px;
+//         }
+
+//         .groupIcon {
+//           width: 48px;
+//           height: 48px;
+
+//           display: grid;
+//           place-items: center;
+
+//           flex: 0 0 auto;
+
+//           border-radius: 14px;
+
+//           background:
+//             ${GREEN_SOFT};
+
+//           color:
+//             ${GREEN};
+//         }
+
+//         .groupIcon
+//         .material-symbols-outlined {
+//           font-size: 26px;
+//         }
+
+//         .identityText {
+//           min-width: 0;
+//         }
+
+//         .identityText h3 {
+//           margin:
+//             0 0 6px;
+
+//           overflow: hidden;
+
+//           color: ${NAVY};
+
+//           font-size: 16px;
+//           font-weight: 760;
+
+//           text-overflow:
+//             ellipsis;
+
+//           white-space:
+//             nowrap;
+//         }
+
+//         .identityText span {
+//           display: block;
+
+//           max-width: 210px;
+
+//           overflow: hidden;
+
+//           color: ${MUTED};
+
+//           font-size: 12px;
+//           font-weight: 600;
+
+//           text-overflow:
+//             ellipsis;
+
+//           white-space:
+//             nowrap;
+//         }
+
+
+//         /* STATUS */
+
+//         .status {
+//           padding:
+//             6px 10px;
+
+//           border-radius: 999px;
+
+//           font-size: 11px;
+//           font-weight: 850;
+
+//           white-space: nowrap;
+//         }
+
+//         .status.active {
+//           background:
+//             ${GREEN_SOFT};
+
+//           color:
+//             ${GREEN};
+//         }
+
+//         .status.other {
+//           background:
+//             #f1f3f2;
+
+//           color:
+//             ${MUTED};
+//         }
+
+
+//         /* =====================================================
+//            VERIFICATION
+//         ===================================================== */
+
+//         .verification {
+//           min-height: 32px;
+
+//           display: flex;
+//           align-items: center;
+
+//           gap: 6px;
+
+//           padding:
+//             0 12px;
+
+//           border-radius: 10px;
+
+//           background:
+//             ${GREEN_SOFT};
+
+//           color:
+//             ${GREEN};
+
+//           font-size: 12px;
+//           font-weight: 800;
+//         }
+
+//         .verification.unverified {
+//           background:
+//             #f5f6f5;
+
+//           color:
+//             ${MUTED};
+//         }
+
+//         .verification
+//         .material-symbols-outlined {
+//           font-size: 18px;
+//         }
+
+
+//         /* =====================================================
+//            INSIGHT
+//         ===================================================== */
+
+//         .insight {
+//           min-height: 48px;
+
+//           padding: 12px;
+
+//           border-radius: 10px;
+
+//           background:
+//             #fafcf9;
+
+//           color: ${TEXT};
+
+//           font-size: 12px;
+
+//           line-height:
+//             1.55;
+//         }
+
+//         .insight strong {
+//           color:
+//             ${GREEN};
+//         }
+
+
+//         /* =====================================================
+//            STATS
+//         ===================================================== */
+
+//         .stats {
+//           display: grid;
+
+//           grid-template-columns:
+//             1fr 1fr;
+
+//           gap: 14px;
+
+//           padding:
+//             14px 0;
+
+//           border-top:
+//             1px solid
+//             #edf0ee;
+
+//           border-bottom:
+//             1px solid
+//             #edf0ee;
+//         }
+
+//         .stat span {
+//           display: block;
+
+//           margin-bottom: 6px;
+
+//           color: ${MUTED};
+
+//           font-size: 10px;
+//           font-weight: 800;
+
+//           letter-spacing:
+//             .04em;
+//         }
+
+//         .stat strong {
+//           color:
+//             ${NAVY};
+
+//           font-size: 14px;
+//           font-weight: 760;
+//         }
+
+//         .stat strong.money {
+//           color:
+//             ${GREEN};
+//         }
+
+
+//         /* =====================================================
+//            CAPACITY
+//         ===================================================== */
+
+//         .capacity {
+//           padding-top: 2px;
+//         }
+
+//         .capacityHead {
+//           display: flex;
+//           align-items: center;
+//           justify-content: space-between;
+
+//           margin-bottom: 8px;
+//         }
+
+//         .capacityHead span {
+//           color: ${MUTED};
+
+//           font-size: 10px;
+//           font-weight: 800;
+//         }
+
+//         .capacityHead strong {
+//           color: ${GREEN};
+
+//           font-size: 12px;
+//         }
+
+//         .capacityBar {
+//           width: 100%;
+//           height: 5px;
+
+//           overflow: hidden;
+
+//           border-radius: 999px;
+
+//           background:
+//             #edf1ee;
+//         }
+
+//         .capacityFill {
+//           height: 100%;
+
+//           border-radius: inherit;
+
+//           background:
+//             ${GREEN};
+
+//           transition:
+//             width .4s ease;
+//         }
+
+
+//         /* =====================================================
+//            CARD FOOTER
+//         ===================================================== */
+
+//         .cardBottom {
+//           display: flex;
+//           align-items: center;
+//           justify-content: space-between;
+
+//           gap: 12px;
+
+//           margin-top: auto;
+//         }
+
+//         .location {
+//           min-width: 0;
+
+//           display: flex;
+//           align-items: center;
+
+//           gap: 6px;
+
+//           color: ${MUTED};
+
+//           font-size: 12px;
+//         }
+
+//         .location
+//         .material-symbols-outlined {
+//           flex: 0 0 auto;
+
+//           font-size: 18px;
+//         }
+
+//         .locationText {
+//           overflow: hidden;
+
+//           text-overflow:
+//             ellipsis;
+
+//           white-space:
+//             nowrap;
+//         }
+
+//         .arrow {
+//           width: 36px;
+//           height: 36px;
+
+//           display: grid;
+//           place-items: center;
+
+//           flex: 0 0 auto;
+
+//           border-radius: 50%;
+
+//           background:
+//             ${NAVY};
+
+//           color: white;
+//         }
+
+//         .arrow
+//         .material-symbols-outlined {
+//           font-size: 20px;
+//         }
+
+
+//         /* =====================================================
+//            EMPTY
+//         ===================================================== */
+
+//         .empty {
+//           padding:
+//             70px 24px;
+
+//           border:
+//             1.5px dashed
+//             ${BORDER};
+
+//           border-radius: 16px;
+
+//           background: white;
+
+//           text-align: center;
+//         }
+
+//         .emptyIcon {
+//           width: 64px;
+//           height: 64px;
+
+//           display: grid;
+//           place-items: center;
+
+//           margin:
+//             0 auto 16px;
+
+//           border-radius: 18px;
+
+//           background:
+//             #f1f4f2;
+
+//           color:
+//             ${GREEN};
+//         }
+
+//         .emptyIcon
+//         .material-symbols-outlined {
+//           font-size: 32px;
+//         }
+
+//         .empty h3 {
+//           margin:
+//             0 0 8px;
+
+//           color:
+//             ${NAVY};
+
+//           font-size: 22px;
+//         }
+
+//         .empty p {
+//           max-width: 480px;
+
+//           margin:
+//             0 auto 24px;
+
+//           color:
+//             ${MUTED};
+
+//           font-size: 14px;
+
+//           line-height: 1.65;
+//         }
+
+//         .emptyActions {
+//           display: flex;
+//           align-items: center;
+//           justify-content: center;
+
+//           gap: 12px;
+//         }
+
+//         .emptyActions button,
+//         .emptyActions a {
+//           display: inline-flex;
+//           align-items: center;
+//           justify-content: center;
+
+//           min-height: 44px;
+
+//           padding:
+//             0 18px;
+
+//           border-radius: 12px;
+
+//           font-family: inherit;
+
+//           font-size: 13px;
+//           font-weight: 800;
+
+//           text-decoration: none;
+
+//           cursor: pointer;
+//         }
+
+//         .emptyActions button {
+//           border:
+//             1.5px solid
+//             ${BORDER};
+
+//           background: white;
+
+//           color:
+//             ${GREEN};
+//         }
+
+//         .emptyActions a {
+//           background:
+//             ${GREEN};
+
+//           color: white;
+//         }
+
+
+//         /* =====================================================
+//            DISCOVER LOADING
+//         ===================================================== */
+
+//         .discoverLoading {
+//           min-height: 280px;
+
+//           display: flex;
+//           flex-direction: column;
+
+//           align-items: center;
+//           justify-content: center;
+
+//           gap: 10px;
+
+//           border:
+//             1px solid
+//             ${BORDER};
+
+//           border-radius: 16px;
+
+//           background: white;
+
+//           color: ${MUTED};
+
+//           font-size: 14px;
+//         }
+
+//         .discoverLoading strong {
+//           color: ${NAVY};
+
+//           font-size: 16px;
+//         }
+
+//         .spinner {
+//           width: 32px;
+//           height: 32px;
+
+//           margin-bottom: 8px;
+
+//           border:
+//             3px solid
+//             #e5ece7;
+
+//           border-top-color:
+//             ${GREEN};
+
+//           border-radius: 50%;
+
+//           animation:
+//             groupSpin .7s
+//             linear infinite;
+//         }
+
+//         @keyframes groupSpin {
+//           to {
+//             transform:
+//               rotate(360deg);
+//           }
+//         }
+
+
+//         /* =====================================================
+//            NO RESULTS
+//         ===================================================== */
+
+//         .noResults {
+//           min-height: 300px;
+
+//           display: flex;
+//           flex-direction: column;
+
+//           align-items: center;
+//           justify-content: center;
+
+//           padding: 40px;
+
+//           border:
+//             1px solid
+//             ${BORDER};
+
+//           border-radius: 16px;
+
+//           background: white;
+
+//           text-align: center;
+//         }
+
+//         .noResultsIcon {
+//           width: 56px;
+//           height: 56px;
+
+//           display: grid;
+//           place-items: center;
+
+//           border-radius: 16px;
+
+//           background:
+//             #f2f5f3;
+
+//           color:
+//             ${MUTED};
+//         }
+
+//         .noResultsIcon
+//         .material-symbols-outlined {
+//           font-size: 28px;
+//         }
+
+//         .noResults h3 {
+//           margin:
+//             16px 0 8px;
+
+//           color:
+//             ${NAVY};
+
+//           font-size: 20px;
+//         }
+
+//         .noResults p {
+//           max-width: 440px;
+
+//           margin: 0;
+
+//           color:
+//             ${MUTED};
+
+//           font-size: 13px;
+
+//           line-height: 1.65;
+//         }
+
+//         .noResults button {
+//           margin-top: 20px;
+
+//           min-height: 40px;
+
+//           padding:
+//             0 16px;
+
+//           border:
+//             1.5px solid
+//             ${BORDER};
+
+//           border-radius: 10px;
+
+//           background: white;
+
+//           color:
+//             ${GREEN};
+
+//           cursor: pointer;
+
+//           font-family: inherit;
+
+//           font-size: 13px;
+//           font-weight: 800;
+//         }
+
+
+//         /* =====================================================
+//            TRUST FOOTER
+//         ===================================================== */
+
+//         .trustFooter {
+//           display: flex;
+//           align-items: flex-start;
+
+//           gap: 12px;
+
+//           max-width: 800px;
+
+//           margin-top: 36px;
+
+//           padding: 16px;
+
+//           border-radius: 12px;
+
+//           background:
+//             #f7faf8;
+//         }
+
+//         .trustFooter
+//         > .material-symbols-outlined {
+//           flex: 0 0 auto;
+
+//           color:
+//             ${GREEN};
+
+//           font-size: 22px;
+//         }
+
+//         .trustFooter strong {
+//           display: block;
+
+//           margin-bottom: 6px;
+
+//           color:
+//             ${NAVY};
+
+//           font-size: 13px;
+//         }
+
+//         .trustFooter p {
+//           margin: 0;
+
+//           color:
+//             ${MUTED};
+
+//           font-size: 12px;
+
+//           line-height: 1.65;
+//         }
+
+
+//         /* =====================================================
+//            RESPONSIVE
+//         ===================================================== */
+
+//         @media (max-width: 1050px) {
+
+//           .grid {
+//             grid-template-columns:
+//               repeat(
+//                 2,
+//                 minmax(0, 1fr)
+//               );
+//           }
+
+//         }
+
+
+//         @media (max-width: 760px) {
+
+//           .groupsPage {
+//             padding:
+//               0 14px 45px;
+//           }
+
+//           .topbar {
+//             grid-template-columns:
+//               1fr auto;
+
+//             gap: 12px;
+
+//             margin-bottom:
+//               30px;
+//           }
+
+//           .searchBox {
+//             grid-column:
+//               1 / -1;
+
+//             grid-row: 2;
+//           }
+
+//           .hero {
+//             align-items:
+//               flex-start;
+
+//             flex-direction:
+//               column;
+//           }
+
+//           .createButton {
+//             width: 100%;
+//           }
+
+//           .grid {
+//             grid-template-columns:
+//               1fr;
+//           }
+
+//           .discoverHeader {
+//             align-items:
+//               flex-start;
+
+//             flex-direction:
+//               column;
+//           }
+
+//           .discoverStats {
+//             width: 100%;
+//           }
+
+//         }
+
+
+//         @media (max-width: 480px) {
+
+//           .hero h1 {
+//             font-size: 32px;
+//           }
+
+//           .sectionHeader {
+//             align-items:
+//               flex-start;
+
+//             flex-direction:
+//               column;
+//           }
+
+//           .discoverButton {
+//             padding: 0;
+//           }
+
+//           .tabs {
+//             width: 100%;
+//           }
+
+//           .tab {
+//             flex: 1;
+
+//             justify-content:
+//               center;
+//           }
+
+//           .tab
+//           .material-symbols-outlined {
+//             display: none;
+//           }
+
+//           .filters {
+//             overflow-x: auto;
+
+//             flex-wrap:
+//               nowrap;
+
+//             padding-bottom: 3px;
+//           }
+
+//           .filter {
+//             flex-shrink: 0;
+
+//             white-space:
+//               nowrap;
+//           }
+
+//           .discoverStats {
+//             justify-content:
+//               space-between;
+//           }
+
+//           .discoverDivider {
+//             height: 24px;
+//           }
+
+//           .status {
+//             display: none;
+//           }
+
+//         }
+
+//       `}</style>
+
+//     </main>
+//   );
+// }
+
+
+// /* =========================================================
+//    GROUP CARD
+// ========================================================= */
+
+// function GroupCard({
+//   group,
+//   mine = false,
+// }: {
+//   group: Group;
+//   mine?: boolean;
+// }) {
+//   const verified =
+//     isVerified(group);
+
+//   const members =
+//     numberValue(
+//       group.member_count
+//     );
+
+//   const maximum =
+//     numberValue(
+//       group.max_members
+//     ) || 20;
+
+//   const pool =
+//     numberValue(
+//       group.pool_amount
+//     );
+
+//   const contribution =
+//     numberValue(
+//       group.contribution_amount
+//     );
+
+//   const capacity =
+//     maximum > 0
+//       ? Math.min(
+//           100,
+//           Math.round(
+//             (members /
+//               maximum) *
+//               100
+//           )
+//         )
+//       : 0;
+
+//   const status =
+//     String(
+//       group.status ||
+//         "active"
+//     );
+
+//   const frequency =
+//     "Monthly";
+
+//   const location =
+//     group.location ||
+//     group.city ||
+//     group.state ||
+//     "Location not provided";
+
+//   /* =======================================================
+//      INTELLIGENCE
+//   ======================================================= */
+
+//   let insight =
+//     "Review the group's details before making a decision.";
+
+//   if (verified) {
+//     if (members >= 10) {
+//       insight =
+//         "Kolo Verified · This is an established group with a strong member base.";
+//     } else if (
+//       capacity >= 80
+//     ) {
+//       insight =
+//         "Kolo Verified · The group is close to its stated membership capacity.";
+//     } else {
+//       insight =
+//         "Kolo Verified · The group's submitted cooperative information has completed Kolo review.";
+//     }
+//   } else if (
+//     status.toLowerCase() ===
+//     "active"
+//   ) {
+//     insight =
+//       "Active group · Check its Kolo verification status and group details before committing funds.";
+//   }
+
+//   if (
+//     members >= maximum &&
+//     maximum > 0
+//   ) {
+//     insight =
+//       verified
+//         ? "Kolo Verified · The group has reached its stated member capacity."
+//         : "The group has reached its stated member capacity.";
+//   }
+
+//   return (
+//     <Link
+//       href={`/groups/${group.id}`}
+//       className="groupCardLink"
+//     >
+//       <article className="groupCard">
+
+//         {/* TOP */}
+
+//         <div className="cardTop">
+
+//           <div className="identity">
+
+//             <div className="groupIcon">
+//               <span className="material-symbols-outlined">
+//                 account_balance
+//               </span>
+//             </div>
+
+//             <div className="identityText">
+
+//               <h3>
+//                 {group.name}
+//               </h3>
+
+//               <span>
+//                 {group.description ||
+//                   "Savings community"}
+//               </span>
+
+//             </div>
+
+//           </div>
+
+//           <span
+//             className={
+//               status.toLowerCase() ===
+//               "active"
+//                 ? "status active"
+//                 : "status other"
+//             }
+//           >
+//             {status}
+//           </span>
+
+//         </div>
+
+
+//         {/* VERIFICATION */}
+
+//         <div
+//           className={
+//             verified
+//               ? "verification"
+//               : "verification unverified"
+//           }
+//         >
+
+//           <span className="material-symbols-outlined">
+//             {verified
+//               ? "verified"
+//               : "help_outline"}
+//           </span>
+
+//           {verified
+//             ? "Kolo Verified"
+//             : "Not Kolo Verified"}
+
+//         </div>
+
+
+//         {/* INSIGHT */}
+
+//         <div className="insight">
+
+//           <strong>
+//             Kolo insight:
+//           </strong>{" "}
+
+//           {insight}
+
+//         </div>
+
+
+//         {/* STATS */}
+
+//         <div className="stats">
+
+//           <div className="stat">
+
+//             <span>
+//               MEMBERS
+//             </span>
+
+//             <strong>
+//               {members}
+//               {" / "}
+//               {maximum}
+//             </strong>
+
+//           </div>
+
+
+//           <div className="stat">
+
+//             <span>
+//               CONTRIBUTION
+//             </span>
+
+//             <strong className="money">
+//               {contribution > 0
+//                 ? formatNaira(
+//                     contribution
+//                   )
+//                 : "Not specified"}
+//             </strong>
+
+//           </div>
+
+
+//           <div className="stat">
+
+//             <span>
+//               CURRENT POOL
+//             </span>
+
+//             <strong className="money">
+//               {formatNaira(pool)}
+//             </strong>
+
+//           </div>
+
+
+//           <div className="stat">
+
+//             <span>
+//               CYCLE
+//             </span>
+
+//             <strong>
+//               {group.cycle_number
+//                 ? `Cycle ${group.cycle_number}`
+//                 : "Current"}
+//             </strong>
+
+//           </div>
+
+//         </div>
+
+
+//         {/* CAPACITY */}
+
+//         <div className="capacity">
+
+//           <div className="capacityHead">
+
+//             <span>
+//               GROUP CAPACITY
+//             </span>
+
+//             <strong>
+//               {capacity}%
+//             </strong>
+
+//           </div>
+
+//           <div className="capacityBar">
+
+//             <div
+//               className="capacityFill"
+//               style={{
+//                 width:
+//                   `${capacity}%`,
+//               }}
+//             />
+
+//           </div>
+
+//         </div>
+
+
+//         {/* FOOTER */}
+
+//         <div className="cardBottom">
+
+//           <div className="location">
+
+//             <span className="material-symbols-outlined">
+//               location_on
+//             </span>
+
+//             <span className="locationText">
+//               {location}
+//             </span>
+
+//           </div>
+
+
+//           <div className="arrow">
+
+//             <span className="material-symbols-outlined">
+//               arrow_forward
+//             </span>
+
+//           </div>
+
+//         </div>
+
+//       </article>
+//     </Link>
+//   );
+// }
+
+
+// /* =========================================================
+//    EMPTY STATE
+// ========================================================= */
+
+// function EmptyGroups({
+//   isAdmin,
+//   onDiscover,
+// }: {
+//   isAdmin: boolean;
+//   onDiscover: () => void;
+// }) {
+//   return (
+//     <div className="empty">
+
+//       <div className="emptyIcon">
+
+//         <span className="material-symbols-outlined">
+//           groups
+//         </span>
+
+//       </div>
+
+//       <h3>
+//         You haven't joined a group yet
+//       </h3>
+
+//       <p>
+//         Explore other savings communities
+//         or create a group if you're an
+//         authorized Kolo administrator.
+//       </p>
+
+//       <div className="emptyActions">
+
+//         <button
+//           type="button"
+//           onClick={onDiscover}
+//         >
+//           Explore groups
+//         </button>
+
+//         {isAdmin && (
+//           <Link href="/groups/create">
+//             Create group
+//           </Link>
+//         )}
+
+//       </div>
+
+//     </div>
+//   );
+// }
 
 
 
