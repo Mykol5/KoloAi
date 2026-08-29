@@ -15,185 +15,1673 @@ export default function AddMembersPage() {
   const [expiry, setExpiry] = useState("7");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState<"success" | "error">("success");
+  const [messageType, setMessageType] =
+    useState<"success" | "error">("success");
   const [pendingInvites, setPendingInvites] = useState<any[]>([]);
   const [currentUserName, setCurrentUserName] = useState("");
   const [copySuccess, setCopySuccess] = useState(false);
 
+  // NEW: permission/loading states
+  const [checkingAccess, setCheckingAccess] = useState(true);
+  const [isGroupAdmin, setIsGroupAdmin] = useState(false);
+
   useEffect(() => {
     async function fetchData() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setCurrentUserName(user.user_metadata?.full_name || user.email?.split("@")[0] || "You");
+      setCheckingAccess(true);
+
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!user) {
+          window.location.href = "/login";
+          return;
+        }
+
+        setCurrentUserName(
+          user.user_metadata?.full_name ||
+            user.email?.split("@")[0] ||
+            "You"
+        );
+
+        // Load group exactly as before
+        const { data: groupData, error: groupError } =
+          await supabase
+            .from("groups")
+            .select("*")
+            .eq("id", id)
+            .single();
+
+        if (groupError || !groupData) {
+          console.error(
+            "Group loading error:",
+            groupError
+          );
+
+          setMessage("Unable to load this group.");
+          setMessageType("error");
+          return;
+        }
+
+        setGroup(groupData);
+
+        // ==================================================
+        // NEW: CHECK ADMIN OF THIS SPECIFIC GROUP
+        // ==================================================
+
+        const {
+          data: membership,
+          error: membershipError,
+        } = await supabase
+          .from("group_members")
+          .select("role")
+          .eq("group_id", id)
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (membershipError) {
+          console.error(
+            "Membership permission check error:",
+            membershipError
+          );
+
+          setIsGroupAdmin(false);
+          setMessage(
+            "Unable to verify your group permissions."
+          );
+          setMessageType("error");
+          return;
+        }
+
+        const admin =
+          membership?.role === "admin";
+
+        setIsGroupAdmin(admin);
+
+        if (!admin) {
+          setMessage(
+            "Only the group administrator can add members."
+          );
+          setMessageType("error");
+        }
+      } catch (error) {
+        console.error(
+          "Add members access error:",
+          error
+        );
+
+        setIsGroupAdmin(false);
+
+        setMessage(
+          "Unable to verify your access to this page."
+        );
+        setMessageType("error");
+      } finally {
+        setCheckingAccess(false);
       }
-      const { data } = await supabase.from("groups").select("*").eq("id", id).single();
-      setGroup(data);
     }
+
     fetchData();
   }, [id, supabase]);
 
   const handleSendInvites = async () => {
+    // =====================================================
+    // NEW: STOP NON-ADMINS BEFORE INVITING
+    // =====================================================
+
+    if (!isGroupAdmin) {
+      setMessage(
+        "Only the group administrator can add members."
+      );
+      setMessageType("error");
+      return;
+    }
+
     if (!emails.trim()) return;
-    setLoading(true); setMessage("");
-    const emailList = emails.split(/[,\n]/).map((e) => e.trim()).filter((e) => e.includes("@"));
-    if (emailList.length === 0) { setMessage("Please enter valid email addresses."); setMessageType("error"); setLoading(false); return; }
+
+    setLoading(true);
+    setMessage("");
+
+    const emailList = emails
+      .split(/[,\n]/)
+      .map((e) => e.trim())
+      .filter((e) => e.includes("@"));
+
+    if (emailList.length === 0) {
+      setMessage(
+        "Please enter valid email addresses."
+      );
+      setMessageType("error");
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await fetch("/api/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ emails: emailList, groupId: id, groupName: group?.name, role, inviterName: currentUserName }) });
+      const response = await fetch("/api/invite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          emails: emailList,
+          groupId: id,
+          groupName: group?.name,
+          role,
+          inviterName: currentUserName,
+        }),
+      });
+
       const result = await response.json();
+
       if (result.success) {
-        const sentCount = result.results.filter((r: any) => r.success).length;
-        const newInvites = result.results.map((r: any) => ({ email: r.email, role, date: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }), status: r.success ? "awaiting" : "failed", note: r.success ? "Invitation sent" : r.error || "Failed" }));
-        setPendingInvites((prev) => [...newInvites, ...prev]);
-        setMessage(sentCount > 0 ? `${sentCount} invitation(s) sent!` : "Could not send invitations.");
-        setMessageType(sentCount > 0 ? "success" : "error");
+        const sentCount = result.results.filter(
+          (r: any) => r.success
+        ).length;
+
+        const newInvites =
+          result.results.map((r: any) => ({
+            email: r.email,
+            role,
+            date: new Date().toLocaleDateString(
+              "en-US",
+              {
+                month: "short",
+                day: "2-digit",
+                year: "numeric",
+              }
+            ),
+            status: r.success
+              ? "awaiting"
+              : "failed",
+            note: r.success
+              ? "Invitation sent"
+              : r.error || "Failed",
+          }));
+
+        setPendingInvites((prev) => [
+          ...newInvites,
+          ...prev,
+        ]);
+
+        setMessage(
+          sentCount > 0
+            ? `${sentCount} invitation(s) sent!`
+            : "Could not send invitations."
+        );
+
+        setMessageType(
+          sentCount > 0
+            ? "success"
+            : "error"
+        );
+
         setEmails("");
-      } else { handleCopyLinkFallback(emailList); }
-    } catch { handleCopyLinkFallback(emailList); }
-    finally { setLoading(false); }
+      } else {
+        handleCopyLinkFallback(emailList);
+      }
+    } catch {
+      handleCopyLinkFallback(emailList);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleCopyLinkFallback = async (emailList: string[]) => {
-    const inviteLink = `${window.location.origin}/join?group=${id}&role=${role}&groupName=${encodeURIComponent(group?.name || "Group")}`;
+  const handleCopyLinkFallback = async (
+    emailList: string[]
+  ) => {
+    if (!isGroupAdmin) {
+      setMessage(
+        "Only the group administrator can invite members."
+      );
+      setMessageType("error");
+      return;
+    }
+
+    const inviteLink =
+      `${window.location.origin}/join?group=${id}&role=${role}&groupName=${encodeURIComponent(
+        group?.name || "Group"
+      )}`;
+
     try {
-      await navigator.clipboard.writeText(inviteLink);
-      setCopySuccess(true); setTimeout(() => setCopySuccess(false), 3000);
-      const newInvites = emailList.map((email) => ({ email, role, date: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }), status: "awaiting", note: "Share link manually" }));
-      setPendingInvites((prev) => [...newInvites, ...prev]);
-      setMessage(`Invite link copied! Share it with ${emailList.length} recipient(s).`);
-      setMessageType("success"); setEmails("");
-    } catch { setMessage("Failed to copy link. Please try again."); setMessageType("error"); }
+      await navigator.clipboard.writeText(
+        inviteLink
+      );
+
+      setCopySuccess(true);
+
+      setTimeout(
+        () => setCopySuccess(false),
+        3000
+      );
+
+      const newInvites =
+        emailList.map((email) => ({
+          email,
+          role,
+          date: new Date().toLocaleDateString(
+            "en-US",
+            {
+              month: "short",
+              day: "2-digit",
+              year: "numeric",
+            }
+          ),
+          status: "awaiting",
+          note: "Share link manually",
+        }));
+
+      setPendingInvites((prev) => [
+        ...newInvites,
+        ...prev,
+      ]);
+
+      setMessage(
+        `Invite link copied! Share it with ${emailList.length} recipient(s).`
+      );
+
+      setMessageType("success");
+      setEmails("");
+    } catch {
+      setMessage(
+        "Failed to copy link. Please try again."
+      );
+
+      setMessageType("error");
+    }
   };
 
-  const invitePreviewLink = `${typeof window !== "undefined" ? window.location.origin : ""}/join?group=${id}&role=${role}&groupName=${encodeURIComponent(group?.name || "Group")}`;
+  const invitePreviewLink =
+    `${typeof window !== "undefined"
+      ? window.location.origin
+      : ""}/join?group=${id}&role=${role}&groupName=${encodeURIComponent(
+        group?.name || "Group"
+      )}`;
 
-  if (!group) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontFamily: "'Inter', sans-serif", color: "#3e4a3d" }}>Loading...</div>;
+  // =======================================================
+  // LOADING ACCESS
+  // =======================================================
+
+  if (checkingAccess) {
+    return (
+      <div
+        style={{
+          minHeight: "60vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "'Inter', sans-serif",
+          color: "#3e4a3d",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <span
+            className="material-symbols-outlined"
+            style={{
+              fontSize: "38px",
+              color: "#006b2c",
+            }}
+          >
+            admin_panel_settings
+          </span>
+
+          <p
+            style={{
+              marginTop: "10px",
+              fontSize: "14px",
+            }}
+          >
+            Checking group permissions...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // =======================================================
+  // GROUP LOADING
+  // =======================================================
+
+  if (!group) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "60vh",
+          fontFamily: "'Inter', sans-serif",
+          color: "#3e4a3d",
+        }}
+      >
+        Loading...
+      </div>
+    );
+  }
+
+  // =======================================================
+  // NON-ADMIN ACCESS BLOCK
+  // =======================================================
+
+  if (!isGroupAdmin) {
+    return (
+      <div
+        style={{
+          backgroundColor: "#eff4ff",
+          minHeight: "100vh",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: "896px",
+            margin: "0 auto",
+            padding: "24px",
+          }}
+        >
+          <Link
+            href={`/groups/${id}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              color: "#006b2c",
+              fontSize: "14px",
+              fontWeight: 500,
+              textDecoration: "none",
+              marginBottom: "28px",
+            }}
+          >
+            <span className="material-symbols-outlined">
+              arrow_back
+            </span>
+
+            Back to {group.name}
+          </Link>
+
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "16px",
+              padding: "50px 30px",
+              textAlign: "center",
+              border:
+                "1px solid rgba(189, 202, 186, 0.3)",
+              boxShadow:
+                "0 8px 25px rgba(15,23,42,0.06)",
+            }}
+          >
+            <div
+              style={{
+                width: "64px",
+                height: "64px",
+                borderRadius: "50%",
+                background: "#fff0ef",
+                color: "#ba1a1a",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 18px",
+              }}
+            >
+              <span
+                className="material-symbols-outlined"
+                style={{ fontSize: "32px" }}
+              >
+                lock
+              </span>
+            </div>
+
+            <h1
+              style={{
+                margin: "0 0 10px",
+                color: "#0b1c30",
+                fontSize: "24px",
+                fontWeight: 700,
+              }}
+            >
+              Administrator access required
+            </h1>
+
+            <p
+              style={{
+                margin: "0 auto 24px",
+                maxWidth: "480px",
+                color: "#5c647a",
+                fontSize: "14px",
+                lineHeight: 1.6,
+              }}
+            >
+              Only the administrator of{" "}
+              <strong>{group.name}</strong>{" "}
+              can add members to this group.
+            </p>
+
+            <Link
+              href={`/groups/${id}`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "12px 22px",
+                borderRadius: "9px",
+                background: "#0b1c30",
+                color: "#ffffff",
+                textDecoration: "none",
+                fontSize: "13px",
+                fontWeight: 600,
+              }}
+            >
+              Back to Group
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // =======================================================
+  // YOUR EXISTING UI STARTS HERE
+  // =======================================================
 
   return (
     <div style={{ backgroundColor: "#eff4ff", minHeight: "100vh" }}>
-      <div style={{ maxWidth: "896px", margin: "0 auto", padding: "24px" }}>
+      <div
+        style={{
+          maxWidth: "896px",
+          margin: "0 auto",
+          padding: "24px",
+        }}
+      >
         {/* Header */}
-        <div className="page-header" style={{ display: "flex", flexDirection: "column", gap: "20px", marginBottom: "32px" }}>
-          <Link href={`/groups/${id}`} style={{ display: "flex", alignItems: "center", gap: "8px", color: "#006b2c", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", textDecoration: "none" }}>
-            <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>arrow_back</span>Back to {group.name}
+        <div
+          className="page-header"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "20px",
+            marginBottom: "32px",
+          }}
+        >
+          <Link
+            href={`/groups/${id}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              color: "#006b2c",
+              fontSize: "14px",
+              fontWeight: 500,
+              textDecoration: "none",
+            }}
+          >
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: "14px" }}
+            >
+              arrow_back
+            </span>
+
+            Back to {group.name}
           </Link>
-          <div className="header-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "16px" }}>
+
+          <div
+            className="header-row"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-end",
+              flexWrap: "wrap",
+              gap: "16px",
+            }}
+          >
             <div>
-              <h1 className="page-title" style={{ fontSize: "32px", fontWeight: 700, fontFamily: "'Inter', sans-serif", color: "#0b1c30" }}>Add New Members</h1>
-              <p style={{ color: "#3e4a3d", marginTop: "6px", fontSize: "15px" }}>Expand your wealth circle by inviting trusted partners to {group.name}.</p>
-              {group.rotation_order && group.rotation_order.length > 0 && (
-                <p style={{ color: "#825100", fontSize: "13px", marginTop: "4px", fontFamily: "'Geist', sans-serif", display: "flex", alignItems: "center", gap: "4px" }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>cached</span> Rotating Ajo — new members added to end of payout rotation.
-                </p>
-              )}
+              <h1
+                className="page-title"
+                style={{
+                  fontSize: "32px",
+                  fontWeight: 700,
+                  fontFamily: "'Inter', sans-serif",
+                  color: "#0b1c30",
+                }}
+              >
+                Add New Members
+              </h1>
+
+              <p
+                style={{
+                  color: "#3e4a3d",
+                  marginTop: "6px",
+                  fontSize: "15px",
+                }}
+              >
+                Expand your wealth circle by
+                inviting trusted partners to{" "}
+                {group.name}.
+              </p>
+
+              {group.rotation_order &&
+                group.rotation_order.length >
+                  0 && (
+                  <p
+                    style={{
+                      color: "#825100",
+                      fontSize: "13px",
+                      marginTop: "4px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                    }}
+                  >
+                    <span className="material-symbols-outlined">
+                      cached
+                    </span>
+
+                    Rotating Ajo — new members
+                    added to end of payout
+                    rotation.
+                  </p>
+                )}
             </div>
-            <button onClick={handleSendInvites} disabled={loading || !emails.trim()}
+
+            <button
+              onClick={
+                handleSendInvites
+              }
+              disabled={
+                loading ||
+                !emails.trim()
+              }
               className="send-btn"
-              style={{ backgroundColor: loading || !emails.trim() ? "#6e7b6c" : "#006b2c", color: "#ffffff", padding: "14px 32px", borderRadius: "12px", fontWeight: 500, fontSize: "14px", fontFamily: "'Geist', sans-serif", border: "none", cursor: loading || !emails.trim() ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: "8px", boxShadow: "0 4px 6px -1px rgba(0, 107, 44, 0.1)", transition: "all 0.2s", whiteSpace: "nowrap" }}>
-              <span className="material-symbols-outlined">send</span>{loading ? "Sending..." : "Send All Invitations"}
+              style={{
+                backgroundColor:
+                  loading ||
+                  !emails.trim()
+                    ? "#6e7b6c"
+                    : "#006b2c",
+                color: "#ffffff",
+                padding:
+                  "14px 32px",
+                borderRadius: "12px",
+                fontWeight: 500,
+                fontSize: "14px",
+                border: "none",
+                cursor:
+                  loading ||
+                  !emails.trim()
+                    ? "not-allowed"
+                    : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                whiteSpace:
+                  "nowrap",
+              }}
+            >
+              <span className="material-symbols-outlined">
+                send
+              </span>
+
+              {loading
+                ? "Sending..."
+                : "Send All Invitations"}
             </button>
           </div>
         </div>
 
         {/* Message */}
         {message && (
-          <div style={{ padding: "12px 16px", borderRadius: "12px", marginBottom: "24px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", backgroundColor: messageType === "error" ? "#ffdad6" : "rgba(0, 107, 44, 0.1)", color: messageType === "error" ? "#93000a" : "#006b2c", textAlign: "center" }}>{message}</div>
+          <div
+            style={{
+              padding:
+                "12px 16px",
+              borderRadius:
+                "12px",
+              marginBottom:
+                "24px",
+              fontSize:
+                "14px",
+              fontWeight:
+                500,
+              backgroundColor:
+                messageType ===
+                "error"
+                  ? "#ffdad6"
+                  : "rgba(0, 107, 44, 0.1)",
+              color:
+                messageType ===
+                "error"
+                  ? "#93000a"
+                  : "#006b2c",
+              textAlign:
+                "center",
+            }}
+          >
+            {message}
+          </div>
         )}
 
         {/* Main Grid */}
-        <div className="add-members-grid" style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: "24px" }}>
-          {/* Left: Form */}
-          <div className="form-col" style={{ gridColumn: "span 8", display: "flex", flexDirection: "column", gap: "24px" }}>
-            <div style={{ backgroundColor: "#ffffff", padding: "24px", borderRadius: "12px", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", border: "1px solid rgba(189, 202, 186, 0.3)" }}>
-              <h3 style={{ fontSize: "18px", fontWeight: 600, fontFamily: "'Inter', sans-serif", marginBottom: "20px" }}>Manual Invite</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+        <div
+          className="add-members-grid"
+          style={{
+            display: "grid",
+            gridTemplateColumns:
+              "repeat(12, 1fr)",
+            gap: "24px",
+          }}
+        >
+          {/* Left */}
+          <div
+            className="form-col"
+            style={{
+              gridColumn:
+                "span 8",
+              display: "flex",
+              flexDirection:
+                "column",
+              gap: "24px",
+            }}
+          >
+            <div
+              style={{
+                backgroundColor:
+                  "#ffffff",
+                padding: "24px",
+                borderRadius:
+                  "12px",
+                boxShadow:
+                  "0 1px 3px rgba(0,0,0,0.05)",
+                border:
+                  "1px solid rgba(189,202,186,0.3)",
+              }}
+            >
+              <h3
+                style={{
+                  fontSize:
+                    "18px",
+                  fontWeight:
+                    600,
+                  marginBottom:
+                    "20px",
+                }}
+              >
+                Manual Invite
+              </h3>
+
+              <div
+                style={{
+                  display:
+                    "flex",
+                  flexDirection:
+                    "column",
+                  gap: "20px",
+                }}
+              >
                 <div>
-                  <label style={lbl}>Email Addresses</label>
-                  <textarea value={emails} onChange={(e) => setEmails(e.target.value)} placeholder="Paste emails separated by commas or new lines...&#10;tunde@gmail.com, sade@yahoo.com" style={{ ...inp, minHeight: "100px", resize: "none" }} />
+                  <label style={lbl}>
+                    Email Addresses
+                  </label>
+
+                  <textarea
+                    value={emails}
+                    onChange={(e) =>
+                      setEmails(
+                        e.target.value
+                      )
+                    }
+                    placeholder={
+                      "Paste emails separated by commas or new lines..."
+                    }
+                    style={{
+                      ...inp,
+                      minHeight:
+                        "100px",
+                      resize:
+                        "none",
+                    }}
+                  />
                 </div>
-                <div className="form-row-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
-                  <div><label style={lbl}>Role</label><select value={role} onChange={(e) => setRole(e.target.value)} style={sel}><option value="member">Member</option><option value="auditor">Auditor</option><option value="admin">Assistant Admin</option></select></div>
-                  <div><label style={lbl}>Expiry</label><select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={sel}><option value="7">7 Days</option><option value="30">30 Days</option><option value="never">Never</option></select></div>
+
+                <div
+                  className="form-row-2"
+                  style={{
+                    display:
+                      "grid",
+                    gridTemplateColumns:
+                      "1fr 1fr",
+                    gap: "20px",
+                  }}
+                >
+                  <div>
+                    <label style={lbl}>
+                      Role
+                    </label>
+
+                    <select
+                      value={role}
+                      onChange={(e) =>
+                        setRole(
+                          e.target.value
+                        )
+                      }
+                      style={sel}
+                    >
+                      <option value="member">
+                        Member
+                      </option>
+
+                      <option value="auditor">
+                        Auditor
+                      </option>
+
+                      <option value="admin">
+                        Assistant Admin
+                      </option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={lbl}>
+                      Expiry
+                    </label>
+
+                    <select
+                      value={expiry}
+                      onChange={(e) =>
+                        setExpiry(
+                          e.target.value
+                        )
+                      }
+                      style={sel}
+                    >
+                      <option value="7">
+                        7 Days
+                      </option>
+
+                      <option value="30">
+                        30 Days
+                      </option>
+
+                      <option value="never">
+                        Never
+                      </option>
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Preview */}
-            <div style={{ background: "rgba(255, 255, 255, 0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(226, 232, 240, 1)", padding: "24px", borderRadius: "12px" }}>
-              <h3 style={{ fontSize: "13px", fontWeight: 600, fontFamily: "'Geist', sans-serif", color: "#3e4a3d", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "20px" }}>Preview Invite Message</h3>
-              <div style={{ backgroundColor: "rgba(211, 228, 254, 0.3)", padding: "20px", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.4)" }}>
-                <p className="preview-text" style={{ fontSize: "15px", color: "#0b1c30", fontStyle: "italic", lineHeight: 1.6 }}>
-                  &quot;Hello! You&apos;ve been invited by <span style={{ fontWeight: 700, color: "#006b2c" }}>{currentUserName}</span> to join <span style={{ fontWeight: 700 }}>{group.name}</span> as a <span style={{ color: "#00873a", fontWeight: 600, textTransform: "capitalize" }}>{role}</span>. Click the link below to create your account and join the savings circle.&quot;
+            <div
+              style={{
+                background:
+                  "rgba(255,255,255,0.8)",
+                backdropFilter:
+                  "blur(12px)",
+                border:
+                  "1px solid rgba(226,232,240,1)",
+                padding:
+                  "24px",
+                borderRadius:
+                  "12px",
+              }}
+            >
+              <h3
+                style={{
+                  fontSize:
+                    "13px",
+                  fontWeight:
+                    600,
+                  color:
+                    "#3e4a3d",
+                  textTransform:
+                    "uppercase",
+                  letterSpacing:
+                    "0.08em",
+                  marginBottom:
+                    "20px",
+                }}
+              >
+                Preview Invite Message
+              </h3>
+
+              <div
+                style={{
+                  backgroundColor:
+                    "rgba(211,228,254,0.3)",
+                  padding:
+                    "20px",
+                  borderRadius:
+                    "8px",
+                }}
+              >
+                <p
+                  className="preview-text"
+                  style={{
+                    fontSize:
+                      "15px",
+                    color:
+                      "#0b1c30",
+                    fontStyle:
+                      "italic",
+                    lineHeight:
+                      1.6,
+                  }}
+                >
+                  &quot;Hello! You&apos;ve
+                  been invited by{" "}
+                  <span
+                    style={{
+                      fontWeight:
+                        700,
+                      color:
+                        "#006b2c",
+                    }}
+                  >
+                    {currentUserName}
+                  </span>{" "}
+                  to join{" "}
+                  <span
+                    style={{
+                      fontWeight:
+                        700,
+                    }}
+                  >
+                    {group.name}
+                  </span>{" "}
+                  as a{" "}
+                  <span
+                    style={{
+                      color:
+                        "#00873a",
+                      fontWeight:
+                        600,
+                      textTransform:
+                        "capitalize",
+                    }}
+                  >
+                    {role}
+                  </span>
+                  . Click the link below
+                  to create your account and
+                  join the savings circle.&quot;
                 </p>
-                <div className="preview-link-row" style={{ marginTop: "20px", paddingTop: "20px", borderTop: "1px solid rgba(189, 202, 186, 0.3)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
-                  <span style={{ color: "#006b2c", fontWeight: 500, fontSize: "13px", wordBreak: "break-all", flex: 1 }}>{invitePreviewLink}</span>
-                  <button onClick={() => { navigator.clipboard.writeText(invitePreviewLink); setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); }} style={{ background: "none", border: "none", cursor: "pointer", color: copySuccess ? "#006b2c" : "#3e4a3d", padding: "6px", flexShrink: 0 }}>
-                    <span className="material-symbols-outlined">{copySuccess ? "check" : "content_copy"}</span>
+
+                <div
+                  className="preview-link-row"
+                  style={{
+                    marginTop:
+                      "20px",
+                    paddingTop:
+                      "20px",
+                    borderTop:
+                      "1px solid rgba(189,202,186,0.3)",
+                    display:
+                      "flex",
+                    justifyContent:
+                      "space-between",
+                    alignItems:
+                      "center",
+                    gap: "12px",
+                  }}
+                >
+                  <span
+                    style={{
+                      color:
+                        "#006b2c",
+                      fontWeight:
+                        500,
+                      fontSize:
+                        "13px",
+                      wordBreak:
+                        "break-all",
+                      flex: 1,
+                    }}
+                  >
+                    {
+                      invitePreviewLink
+                    }
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(
+                        invitePreviewLink
+                      );
+
+                      setCopySuccess(
+                        true
+                      );
+
+                      setTimeout(
+                        () =>
+                          setCopySuccess(
+                            false
+                          ),
+                        2000
+                      );
+                    }}
+                    style={{
+                      background:
+                        "none",
+                      border:
+                        "none",
+                      cursor:
+                        "pointer",
+                      color:
+                        copySuccess
+                          ? "#006b2c"
+                          : "#3e4a3d",
+                      padding:
+                        "6px",
+                    }}
+                  >
+                    <span className="material-symbols-outlined">
+                      {copySuccess
+                        ? "check"
+                        : "content_copy"}
+                    </span>
                   </button>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Right: Quick Invite */}
-          <div className="right-col" style={{ gridColumn: "span 4", display: "flex", flexDirection: "column", gap: "24px" }}>
-            <div style={{ backgroundColor: "#0b1c30", color: "#ffffff", padding: "24px", borderRadius: "12px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
-              <div style={{ width: "48px", height: "48px", backgroundColor: "#00873a", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "20px" }}><span className="material-symbols-outlined" style={{ color: "#f7fff2" }}>qr_code_2</span></div>
-              <h3 style={{ fontSize: "18px", fontWeight: 600, marginBottom: "6px" }}>Instant Join Link</h3>
-              <p style={{ fontSize: "12px", color: "rgba(211, 228, 254, 0.6)", marginBottom: "20px" }}>Share this link for quick onboarding via WhatsApp or Slack.</p>
-              <button onClick={() => { navigator.clipboard.writeText(invitePreviewLink); setCopySuccess(true); setMessage("Link copied!"); setMessageType("success"); setTimeout(() => setCopySuccess(false), 2000); }}
-                className="copy-link-btn"
-                style={{ width: "100%", padding: "14px", backgroundColor: "rgba(211, 228, 254, 0.1)", border: "1px solid rgba(211, 228, 254, 0.2)", borderRadius: "8px", fontWeight: 500, fontSize: "14px", fontFamily: "'Geist', sans-serif", color: "#ffffff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-                <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>{copySuccess ? "check" : "link"}</span>{copySuccess ? "Copied!" : "Copy Link"}
+          {/* Right */}
+          <div
+            className="right-col"
+            style={{
+              gridColumn:
+                "span 4",
+              display: "flex",
+              flexDirection:
+                "column",
+              gap: "24px",
+            }}
+          >
+            <div
+              style={{
+                background:
+                  "#0b1c30",
+                color:
+                  "#ffffff",
+                padding:
+                  "24px",
+                borderRadius:
+                  "12px",
+                textAlign:
+                  "center",
+              }}
+            >
+              <div
+                style={{
+                  width: "48px",
+                  height: "48px",
+                  background:
+                    "#00873a",
+                  borderRadius:
+                    "50%",
+                  display:
+                    "flex",
+                  alignItems:
+                    "center",
+                  justifyContent:
+                    "center",
+                  margin:
+                    "0 auto 20px",
+                }}
+              >
+                <span className="material-symbols-outlined">
+                  qr_code_2
+                </span>
+              </div>
+
+              <h3
+                style={{
+                  fontSize:
+                    "18px",
+                  fontWeight:
+                    600,
+                  marginBottom:
+                    "6px",
+                }}
+              >
+                Instant Join Link
+              </h3>
+
+              <p
+                style={{
+                  fontSize:
+                    "12px",
+                  color:
+                    "rgba(211,228,254,0.6)",
+                  marginBottom:
+                    "20px",
+                }}
+              >
+                Share this link for quick
+                onboarding via WhatsApp or
+                Slack.
+              </p>
+
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    invitePreviewLink
+                  );
+
+                  setCopySuccess(
+                    true
+                  );
+
+                  setMessage(
+                    "Link copied!"
+                  );
+
+                  setMessageType(
+                    "success"
+                  );
+
+                  setTimeout(
+                    () =>
+                      setCopySuccess(
+                        false
+                      ),
+                    2000
+                  );
+                }}
+                style={{
+                  width:
+                    "100%",
+                  padding:
+                    "14px",
+                  background:
+                    "rgba(211,228,254,0.1)",
+                  border:
+                    "1px solid rgba(211,228,254,0.2)",
+                  borderRadius:
+                    "8px",
+                  fontWeight:
+                    500,
+                  fontSize:
+                    "14px",
+                  color:
+                    "#ffffff",
+                  cursor:
+                    "pointer",
+                  display:
+                    "flex",
+                  alignItems:
+                    "center",
+                  justifyContent:
+                    "center",
+                  gap: "8px",
+                }}
+              >
+                <span className="material-symbols-outlined">
+                  {copySuccess
+                    ? "check"
+                    : "link"}
+                </span>
+
+                {copySuccess
+                  ? "Copied!"
+                  : "Copy Link"}
               </button>
             </div>
 
             {/* Group Summary */}
-            <div style={{ backgroundColor: "#ffffff", padding: "24px", borderRadius: "12px", border: "1px solid rgba(189, 202, 186, 0.3)" }}>
-              <h4 style={{ fontSize: "13px", fontWeight: 600, fontFamily: "'Geist', sans-serif", color: "#3e4a3d", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Group Summary</h4>
-              <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "14px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Name</span><span style={{ fontWeight: 500 }}>{group.name}</span></div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Members</span><span style={{ fontWeight: 500 }}>{group.member_count || 0}/{group.max_members || 20}</span></div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Contribution</span><span style={{ fontWeight: 500, color: "#006b2c" }}>₦{(group.contribution_amount || 0).toLocaleString()}</span></div>
-                {group.rotation_order && group.rotation_order.length > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Type</span><span style={{ fontWeight: 500, color: "#825100", display: "flex", alignItems: "center", gap: "4px" }}><span className="material-symbols-outlined" style={{ fontSize: "14px" }}>cached</span> Rotating Ajo</span></div>
-                )}
+            <div
+              style={{
+                background:
+                  "#ffffff",
+                padding:
+                  "24px",
+                borderRadius:
+                  "12px",
+                border:
+                  "1px solid rgba(189,202,186,0.3)",
+              }}
+            >
+              <h4
+                style={{
+                  fontSize:
+                    "13px",
+                  fontWeight:
+                    600,
+                  color:
+                    "#3e4a3d",
+                  marginBottom:
+                    "16px",
+                  textTransform:
+                    "uppercase",
+                  letterSpacing:
+                    "0.05em",
+                }}
+              >
+                Group Summary
+              </h4>
+
+              <div
+                style={{
+                  display:
+                    "flex",
+                  flexDirection:
+                    "column",
+                  gap: "12px",
+                  fontSize:
+                    "14px",
+                }}
+              >
+                <div
+                  style={{
+                    display:
+                      "flex",
+                    justifyContent:
+                      "space-between",
+                  }}
+                >
+                  <span
+                    style={{
+                      color:
+                        "#3e4a3d",
+                    }}
+                  >
+                    Name
+                  </span>
+
+                  <span
+                    style={{
+                      fontWeight:
+                        500,
+                    }}
+                  >
+                    {group.name}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display:
+                      "flex",
+                    justifyContent:
+                      "space-between",
+                  }}
+                >
+                  <span
+                    style={{
+                      color:
+                        "#3e4a3d",
+                    }}
+                  >
+                    Members
+                  </span>
+
+                  <span
+                    style={{
+                      fontWeight:
+                        500,
+                    }}
+                  >
+                    {group.member_count ||
+                      0}
+                    /
+                    {group.max_members ||
+                      20}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display:
+                      "flex",
+                    justifyContent:
+                      "space-between",
+                  }}
+                >
+                  <span
+                    style={{
+                      color:
+                        "#3e4a3d",
+                    }}
+                  >
+                    Contribution
+                  </span>
+
+                  <span
+                    style={{
+                      fontWeight:
+                        500,
+                      color:
+                        "#006b2c",
+                    }}
+                  >
+                    ₦
+                    {Number(
+                      group.contribution_amount ||
+                        0
+                    ).toLocaleString()}
+                  </span>
+                </div>
+
+                {group.rotation_order &&
+                  group.rotation_order
+                    .length >
+                    0 && (
+                    <div
+                      style={{
+                        display:
+                          "flex",
+                        justifyContent:
+                          "space-between",
+                      }}
+                    >
+                      <span
+                        style={{
+                          color:
+                            "#3e4a3d",
+                        }}
+                      >
+                        Type
+                      </span>
+
+                      <span
+                        style={{
+                          fontWeight:
+                            500,
+                          color:
+                            "#825100",
+                          display:
+                            "flex",
+                          alignItems:
+                            "center",
+                          gap: "4px",
+                        }}
+                      >
+                        <span className="material-symbols-outlined">
+                          cached
+                        </span>
+
+                        Rotating Ajo
+                      </span>
+                    </div>
+                  )}
               </div>
             </div>
           </div>
 
-          {/* Pending Invitations Table */}
-          <div className="table-col" style={{ gridColumn: "span 12" }}>
-            <div style={{ backgroundColor: "#ffffff", borderRadius: "12px", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", border: "1px solid rgba(189, 202, 186, 0.3)", overflow: "hidden" }}>
-              <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(189, 202, 186, 0.3)", backgroundColor: "#f8f9ff" }}>
-                <h3 style={{ fontSize: "18px", fontWeight: 600, fontFamily: "'Inter', sans-serif" }}>Pending Invitations ({pendingInvites.length})</h3>
+          {/* Pending Invitations */}
+          <div
+            className="table-col"
+            style={{
+              gridColumn:
+                "span 12",
+            }}
+          >
+            <div
+              style={{
+                background:
+                  "#ffffff",
+                borderRadius:
+                  "12px",
+                boxShadow:
+                  "0 1px 3px rgba(0,0,0,0.05)",
+                border:
+                  "1px solid rgba(189,202,186,0.3)",
+                overflow:
+                  "hidden",
+              }}
+            >
+              <div
+                style={{
+                  padding:
+                    "16px 20px",
+                  borderBottom:
+                    "1px solid rgba(189,202,186,0.3)",
+                  background:
+                    "#f8f9ff",
+                }}
+              >
+                <h3
+                  style={{
+                    fontSize:
+                      "18px",
+                    fontWeight:
+                      600,
+                  }}
+                >
+                  Pending Invitations (
+                  {pendingInvites.length}
+                  )
+                </h3>
               </div>
-              <div style={{ overflowX: "auto" }}>
-                {pendingInvites.length === 0 ? (
-                  <div style={{ padding: "50px 24px", textAlign: "center", color: "#3e4a3d" }}>
-                    <span className="material-symbols-outlined" style={{ fontSize: "44px", display: "block", marginBottom: "12px", color: "#bdcaba" }}>mail</span>
-                    <p style={{ fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif" }}>No pending invitations. Send your first invite above.</p>
+
+              <div
+                style={{
+                  overflowX:
+                    "auto",
+                }}
+              >
+                {pendingInvites.length ===
+                0 ? (
+                  <div
+                    style={{
+                      padding:
+                        "50px 24px",
+                      textAlign:
+                        "center",
+                      color:
+                        "#3e4a3d",
+                    }}
+                  >
+                    <span
+                      className="material-symbols-outlined"
+                      style={{
+                        fontSize:
+                          "44px",
+                        display:
+                          "block",
+                        marginBottom:
+                          "12px",
+                        color:
+                          "#bdcaba",
+                      }}
+                    >
+                      mail
+                    </span>
+
+                    <p
+                      style={{
+                        fontSize:
+                          "14px",
+                        fontWeight:
+                          500,
+                      }}
+                    >
+                      No pending invitations.
+                      Send your first invite
+                      above.
+                    </p>
                   </div>
                 ) : (
-                  <table className="invites-table" style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", minWidth: "550px" }}>
-                    <thead><tr style={{ backgroundColor: "#eff4ff" }}><th style={th}>Recipient</th><th style={th}>Role</th><th style={th}>Sent</th><th style={th}>Status</th><th style={{ ...th, textAlign: "right" }}>Actions</th></tr></thead>
-                    <tbody style={{ borderTop: "1px solid rgba(189, 202, 186, 0.2)" }}>
-                      {pendingInvites.map((invite: any, i: number) => (
-                        <tr key={i} style={{ borderBottom: "1px solid rgba(189, 202, 186, 0.2)", transition: "background-color 0.2s", cursor: "pointer" }}
-                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#eff4ff"; }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}>
-                          <td style={{ padding: "18px 20px" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                              <div style={{ width: "32px", height: "32px", borderRadius: "50%", backgroundColor: "#dae2fd", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "12px", color: "#5c647a", flexShrink: 0 }}>{invite.email?.charAt(0).toUpperCase() || "?"}</div>
-                              <div><p style={{ fontSize: "14px", fontWeight: 500 }}>{invite.email}</p><p style={{ fontSize: "11px", color: "#6e7b6c" }}>{invite.note}</p></div>
-                            </div>
-                          </td>
-                          <td style={{ padding: "18px 20px", fontSize: "13px", textTransform: "capitalize" }}>{invite.role}</td>
-                          <td style={{ padding: "18px 20px", fontSize: "13px", color: "#3e4a3d" }}>{invite.date}</td>
-                          <td style={{ padding: "18px 20px" }}><span style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 10px", borderRadius: "9999px", fontSize: "11px", fontWeight: 600, backgroundColor: invite.status === "awaiting" ? "rgba(130, 81, 0, 0.1)" : invite.status === "clicked" ? "rgba(0, 107, 44, 0.1)" : "rgba(186, 26, 26, 0.1)", color: invite.status === "awaiting" ? "#825100" : invite.status === "clicked" ? "#006b2c" : "#ba1a1a" }}><span style={{ width: "5px", height: "5px", borderRadius: "50%", backgroundColor: "currentColor" }} />{invite.status === "awaiting" ? "Awaiting" : invite.status === "clicked" ? "Clicked" : "Failed"}</span></td>
-                          <td style={{ padding: "18px 20px", textAlign: "right" }}>
-                            <button onClick={() => { navigator.clipboard.writeText(invitePreviewLink); setMessage("Link copied!"); setMessageType("success"); }} style={{ background: "none", border: "none", color: "#006b2c", cursor: "pointer", fontSize: "12px", fontWeight: 600 }}>Resend</button>
-                          </td>
-                        </tr>
-                      ))}
+                  <table
+                    className="invites-table"
+                    style={{
+                      width:
+                        "100%",
+                      textAlign:
+                        "left",
+                      borderCollapse:
+                        "collapse",
+                      minWidth:
+                        "550px",
+                    }}
+                  >
+                    <thead>
+                      <tr
+                        style={{
+                          background:
+                            "#eff4ff",
+                        }}
+                      >
+                        <th style={th}>
+                          Recipient
+                        </th>
+                        <th style={th}>
+                          Role
+                        </th>
+                        <th style={th}>
+                          Sent
+                        </th>
+                        <th style={th}>
+                          Status
+                        </th>
+                        <th
+                          style={{
+                            ...th,
+                            textAlign:
+                              "right",
+                          }}
+                        >
+                          Actions
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {pendingInvites.map(
+                        (
+                          invite: any,
+                          i: number
+                        ) => (
+                          <tr
+                            key={i}
+                            style={{
+                              borderBottom:
+                                "1px solid rgba(189,202,186,0.2)",
+                            }}
+                          >
+                            <td
+                              style={{
+                                padding:
+                                  "18px 20px",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display:
+                                    "flex",
+                                  alignItems:
+                                    "center",
+                                  gap:
+                                    "12px",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width:
+                                      "32px",
+                                    height:
+                                      "32px",
+                                    borderRadius:
+                                      "50%",
+                                    background:
+                                      "#dae2fd",
+                                    display:
+                                      "flex",
+                                    alignItems:
+                                      "center",
+                                    justifyContent:
+                                      "center",
+                                    fontWeight:
+                                      700,
+                                    fontSize:
+                                      "12px",
+                                    color:
+                                      "#5c647a",
+                                  }}
+                                >
+                                  {invite.email
+                                    ?.charAt(
+                                      0
+                                    )
+                                    .toUpperCase() ||
+                                    "?"}
+                                </div>
+
+                                <div>
+                                  <p
+                                    style={{
+                                      fontSize:
+                                        "14px",
+                                      fontWeight:
+                                        500,
+                                      margin:
+                                        0,
+                                    }}
+                                  >
+                                    {
+                                      invite.email
+                                    }
+                                  </p>
+
+                                  <p
+                                    style={{
+                                      fontSize:
+                                        "11px",
+                                      color:
+                                        "#6e7b6c",
+                                      margin:
+                                        "3px 0 0",
+                                    }}
+                                  >
+                                    {
+                                      invite.note
+                                    }
+                                  </p>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td
+                              style={{
+                                padding:
+                                  "18px 20px",
+                                fontSize:
+                                  "13px",
+                                textTransform:
+                                  "capitalize",
+                              }}
+                            >
+                              {
+                                invite.role
+                              }
+                            </td>
+
+                            <td
+                              style={{
+                                padding:
+                                  "18px 20px",
+                                fontSize:
+                                  "13px",
+                                color:
+                                  "#3e4a3d",
+                              }}
+                            >
+                              {
+                                invite.date
+                              }
+                            </td>
+
+                            <td
+                              style={{
+                                padding:
+                                  "18px 20px",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  display:
+                                    "inline-flex",
+                                  alignItems:
+                                    "center",
+                                  gap:
+                                    "5px",
+                                  padding:
+                                    "3px 10px",
+                                  borderRadius:
+                                    "9999px",
+                                  fontSize:
+                                    "11px",
+                                  fontWeight:
+                                    600,
+                                  background:
+                                    invite.status ===
+                                    "awaiting"
+                                      ? "rgba(130,81,0,0.1)"
+                                      : invite.status ===
+                                        "clicked"
+                                      ? "rgba(0,107,44,0.1)"
+                                      : "rgba(186,26,26,0.1)",
+                                  color:
+                                    invite.status ===
+                                    "awaiting"
+                                      ? "#825100"
+                                      : invite.status ===
+                                        "clicked"
+                                      ? "#006b2c"
+                                      : "#ba1a1a",
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    width:
+                                      "5px",
+                                    height:
+                                      "5px",
+                                    borderRadius:
+                                      "50%",
+                                    background:
+                                      "currentColor",
+                                  }}
+                                />
+
+                                {invite.status ===
+                                "awaiting"
+                                  ? "Awaiting"
+                                  : invite.status ===
+                                    "clicked"
+                                  ? "Clicked"
+                                  : "Failed"}
+                              </span>
+                            </td>
+
+                            <td
+                              style={{
+                                padding:
+                                  "18px 20px",
+                                textAlign:
+                                  "right",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(
+                                    invitePreviewLink
+                                  );
+
+                                  setMessage(
+                                    "Link copied!"
+                                  );
+
+                                  setMessageType(
+                                    "success"
+                                  );
+                                }}
+                                style={{
+                                  background:
+                                    "none",
+                                  border:
+                                    "none",
+                                  color:
+                                    "#006b2c",
+                                  cursor:
+                                    "pointer",
+                                  fontSize:
+                                    "12px",
+                                  fontWeight:
+                                    600,
+                                }}
+                              >
+                                Resend
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      )}
                     </tbody>
                   </table>
                 )}
@@ -203,33 +1691,332 @@ export default function AddMembersPage() {
         </div>
       </div>
 
-      {/* Mobile Responsive Styles */}
       <style jsx>{`
         @media (max-width: 900px) {
-          .add-members-grid { grid-template-columns: 1fr !important; }
-          .form-col { grid-column: span 1 !important; }
-          .right-col { grid-column: span 1 !important; }
-          .table-col { grid-column: span 1 !important; }
+          .add-members-grid {
+            grid-template-columns: 1fr !important;
+          }
+
+          .form-col,
+          .right-col,
+          .table-col {
+            grid-column: span 1 !important;
+          }
         }
+
         @media (max-width: 600px) {
-          .page-title { font-size: 24px !important; }
-          .header-row { flex-direction: column !important; align-items: stretch !important; }
-          .send-btn { width: 100%; justify-content: center; }
-          .form-row-2 { grid-template-columns: 1fr !important; }
-          .preview-text { font-size: 13px !important; }
-          .preview-link-row { flex-direction: column !important; align-items: flex-start !important; }
-          .invites-table { font-size: 12px !important; }
-          .invites-table th, .invites-table td { padding: 12px 14px !important; }
+          .page-title {
+            font-size: 24px !important;
+          }
+
+          .header-row {
+            flex-direction: column !important;
+            align-items: stretch !important;
+          }
+
+          .send-btn {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .form-row-2 {
+            grid-template-columns: 1fr !important;
+          }
+
+          .preview-text {
+            font-size: 13px !important;
+          }
+
+          .preview-link-row {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+          }
+
+          .invites-table {
+            font-size: 12px !important;
+          }
+
+          .invites-table th,
+          .invites-table td {
+            padding: 12px 14px !important;
+          }
         }
       `}</style>
     </div>
   );
 }
 
-const lbl: React.CSSProperties = { fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", color: "#3e4a3d", marginBottom: "6px", display: "block" };
-const inp: React.CSSProperties = { width: "100%", padding: "14px 16px", border: "1px solid rgba(189, 202, 186, 0.5)", borderRadius: "8px", backgroundColor: "#f8f9ff", outline: "none", fontSize: "15px", fontFamily: "'Inter', sans-serif", boxSizing: "border-box" };
-const sel: React.CSSProperties = { ...inp, cursor: "pointer" };
-const th: React.CSSProperties = { padding: "14px 20px", fontSize: "11px", fontWeight: 600, fontFamily: "'Geist', sans-serif", color: "#6e7b6c", textTransform: "uppercase", letterSpacing: "0.05em" };
+const lbl: React.CSSProperties = {
+  fontSize: "14px",
+  fontWeight: 500,
+  fontFamily: "'Geist', sans-serif",
+  color: "#3e4a3d",
+  marginBottom: "6px",
+  display: "block",
+};
+
+const inp: React.CSSProperties = {
+  width: "100%",
+  padding: "14px 16px",
+  border:
+    "1px solid rgba(189, 202, 186, 0.5)",
+  borderRadius: "8px",
+  backgroundColor: "#f8f9ff",
+  outline: "none",
+  fontSize: "15px",
+  fontFamily: "'Inter', sans-serif",
+  boxSizing: "border-box",
+};
+
+const sel: React.CSSProperties = {
+  ...inp,
+  cursor: "pointer",
+};
+
+const th: React.CSSProperties = {
+  padding: "14px 20px",
+  fontSize: "11px",
+  fontWeight: 600,
+  fontFamily: "'Geist', sans-serif",
+  color: "#6e7b6c",
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+};
+
+
+
+// "use client";
+
+// import { useState, useEffect } from "react";
+// import { useParams } from "next/navigation";
+// import { createClient } from "@/lib/supabase/client";
+// import Link from "next/link";
+
+// export default function AddMembersPage() {
+//   const { id } = useParams();
+//   const supabase = createClient();
+
+//   const [group, setGroup] = useState<any>(null);
+//   const [emails, setEmails] = useState("");
+//   const [role, setRole] = useState("member");
+//   const [expiry, setExpiry] = useState("7");
+//   const [loading, setLoading] = useState(false);
+//   const [message, setMessage] = useState("");
+//   const [messageType, setMessageType] = useState<"success" | "error">("success");
+//   const [pendingInvites, setPendingInvites] = useState<any[]>([]);
+//   const [currentUserName, setCurrentUserName] = useState("");
+//   const [copySuccess, setCopySuccess] = useState(false);
+
+//   useEffect(() => {
+//     async function fetchData() {
+//       const { data: { user } } = await supabase.auth.getUser();
+//       if (user) {
+//         setCurrentUserName(user.user_metadata?.full_name || user.email?.split("@")[0] || "You");
+//       }
+//       const { data } = await supabase.from("groups").select("*").eq("id", id).single();
+//       setGroup(data);
+//     }
+//     fetchData();
+//   }, [id, supabase]);
+
+//   const handleSendInvites = async () => {
+//     if (!emails.trim()) return;
+//     setLoading(true); setMessage("");
+//     const emailList = emails.split(/[,\n]/).map((e) => e.trim()).filter((e) => e.includes("@"));
+//     if (emailList.length === 0) { setMessage("Please enter valid email addresses."); setMessageType("error"); setLoading(false); return; }
+//     try {
+//       const response = await fetch("/api/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ emails: emailList, groupId: id, groupName: group?.name, role, inviterName: currentUserName }) });
+//       const result = await response.json();
+//       if (result.success) {
+//         const sentCount = result.results.filter((r: any) => r.success).length;
+//         const newInvites = result.results.map((r: any) => ({ email: r.email, role, date: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }), status: r.success ? "awaiting" : "failed", note: r.success ? "Invitation sent" : r.error || "Failed" }));
+//         setPendingInvites((prev) => [...newInvites, ...prev]);
+//         setMessage(sentCount > 0 ? `${sentCount} invitation(s) sent!` : "Could not send invitations.");
+//         setMessageType(sentCount > 0 ? "success" : "error");
+//         setEmails("");
+//       } else { handleCopyLinkFallback(emailList); }
+//     } catch { handleCopyLinkFallback(emailList); }
+//     finally { setLoading(false); }
+//   };
+
+//   const handleCopyLinkFallback = async (emailList: string[]) => {
+//     const inviteLink = `${window.location.origin}/join?group=${id}&role=${role}&groupName=${encodeURIComponent(group?.name || "Group")}`;
+//     try {
+//       await navigator.clipboard.writeText(inviteLink);
+//       setCopySuccess(true); setTimeout(() => setCopySuccess(false), 3000);
+//       const newInvites = emailList.map((email) => ({ email, role, date: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }), status: "awaiting", note: "Share link manually" }));
+//       setPendingInvites((prev) => [...newInvites, ...prev]);
+//       setMessage(`Invite link copied! Share it with ${emailList.length} recipient(s).`);
+//       setMessageType("success"); setEmails("");
+//     } catch { setMessage("Failed to copy link. Please try again."); setMessageType("error"); }
+//   };
+
+//   const invitePreviewLink = `${typeof window !== "undefined" ? window.location.origin : ""}/join?group=${id}&role=${role}&groupName=${encodeURIComponent(group?.name || "Group")}`;
+
+//   if (!group) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontFamily: "'Inter', sans-serif", color: "#3e4a3d" }}>Loading...</div>;
+
+//   return (
+//     <div style={{ backgroundColor: "#eff4ff", minHeight: "100vh" }}>
+//       <div style={{ maxWidth: "896px", margin: "0 auto", padding: "24px" }}>
+//         {/* Header */}
+//         <div className="page-header" style={{ display: "flex", flexDirection: "column", gap: "20px", marginBottom: "32px" }}>
+//           <Link href={`/groups/${id}`} style={{ display: "flex", alignItems: "center", gap: "8px", color: "#006b2c", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", textDecoration: "none" }}>
+//             <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>arrow_back</span>Back to {group.name}
+//           </Link>
+//           <div className="header-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "16px" }}>
+//             <div>
+//               <h1 className="page-title" style={{ fontSize: "32px", fontWeight: 700, fontFamily: "'Inter', sans-serif", color: "#0b1c30" }}>Add New Members</h1>
+//               <p style={{ color: "#3e4a3d", marginTop: "6px", fontSize: "15px" }}>Expand your wealth circle by inviting trusted partners to {group.name}.</p>
+//               {group.rotation_order && group.rotation_order.length > 0 && (
+//                 <p style={{ color: "#825100", fontSize: "13px", marginTop: "4px", fontFamily: "'Geist', sans-serif", display: "flex", alignItems: "center", gap: "4px" }}>
+//                   <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>cached</span> Rotating Ajo — new members added to end of payout rotation.
+//                 </p>
+//               )}
+//             </div>
+//             <button onClick={handleSendInvites} disabled={loading || !emails.trim()}
+//               className="send-btn"
+//               style={{ backgroundColor: loading || !emails.trim() ? "#6e7b6c" : "#006b2c", color: "#ffffff", padding: "14px 32px", borderRadius: "12px", fontWeight: 500, fontSize: "14px", fontFamily: "'Geist', sans-serif", border: "none", cursor: loading || !emails.trim() ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: "8px", boxShadow: "0 4px 6px -1px rgba(0, 107, 44, 0.1)", transition: "all 0.2s", whiteSpace: "nowrap" }}>
+//               <span className="material-symbols-outlined">send</span>{loading ? "Sending..." : "Send All Invitations"}
+//             </button>
+//           </div>
+//         </div>
+
+//         {/* Message */}
+//         {message && (
+//           <div style={{ padding: "12px 16px", borderRadius: "12px", marginBottom: "24px", fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", backgroundColor: messageType === "error" ? "#ffdad6" : "rgba(0, 107, 44, 0.1)", color: messageType === "error" ? "#93000a" : "#006b2c", textAlign: "center" }}>{message}</div>
+//         )}
+
+//         {/* Main Grid */}
+//         <div className="add-members-grid" style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: "24px" }}>
+//           {/* Left: Form */}
+//           <div className="form-col" style={{ gridColumn: "span 8", display: "flex", flexDirection: "column", gap: "24px" }}>
+//             <div style={{ backgroundColor: "#ffffff", padding: "24px", borderRadius: "12px", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", border: "1px solid rgba(189, 202, 186, 0.3)" }}>
+//               <h3 style={{ fontSize: "18px", fontWeight: 600, fontFamily: "'Inter', sans-serif", marginBottom: "20px" }}>Manual Invite</h3>
+//               <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+//                 <div>
+//                   <label style={lbl}>Email Addresses</label>
+//                   <textarea value={emails} onChange={(e) => setEmails(e.target.value)} placeholder="Paste emails separated by commas or new lines...&#10;tunde@gmail.com, sade@yahoo.com" style={{ ...inp, minHeight: "100px", resize: "none" }} />
+//                 </div>
+//                 <div className="form-row-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+//                   <div><label style={lbl}>Role</label><select value={role} onChange={(e) => setRole(e.target.value)} style={sel}><option value="member">Member</option><option value="auditor">Auditor</option><option value="admin">Assistant Admin</option></select></div>
+//                   <div><label style={lbl}>Expiry</label><select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={sel}><option value="7">7 Days</option><option value="30">30 Days</option><option value="never">Never</option></select></div>
+//                 </div>
+//               </div>
+//             </div>
+
+//             {/* Preview */}
+//             <div style={{ background: "rgba(255, 255, 255, 0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(226, 232, 240, 1)", padding: "24px", borderRadius: "12px" }}>
+//               <h3 style={{ fontSize: "13px", fontWeight: 600, fontFamily: "'Geist', sans-serif", color: "#3e4a3d", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "20px" }}>Preview Invite Message</h3>
+//               <div style={{ backgroundColor: "rgba(211, 228, 254, 0.3)", padding: "20px", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.4)" }}>
+//                 <p className="preview-text" style={{ fontSize: "15px", color: "#0b1c30", fontStyle: "italic", lineHeight: 1.6 }}>
+//                   &quot;Hello! You&apos;ve been invited by <span style={{ fontWeight: 700, color: "#006b2c" }}>{currentUserName}</span> to join <span style={{ fontWeight: 700 }}>{group.name}</span> as a <span style={{ color: "#00873a", fontWeight: 600, textTransform: "capitalize" }}>{role}</span>. Click the link below to create your account and join the savings circle.&quot;
+//                 </p>
+//                 <div className="preview-link-row" style={{ marginTop: "20px", paddingTop: "20px", borderTop: "1px solid rgba(189, 202, 186, 0.3)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
+//                   <span style={{ color: "#006b2c", fontWeight: 500, fontSize: "13px", wordBreak: "break-all", flex: 1 }}>{invitePreviewLink}</span>
+//                   <button onClick={() => { navigator.clipboard.writeText(invitePreviewLink); setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); }} style={{ background: "none", border: "none", cursor: "pointer", color: copySuccess ? "#006b2c" : "#3e4a3d", padding: "6px", flexShrink: 0 }}>
+//                     <span className="material-symbols-outlined">{copySuccess ? "check" : "content_copy"}</span>
+//                   </button>
+//                 </div>
+//               </div>
+//             </div>
+//           </div>
+
+//           {/* Right: Quick Invite */}
+//           <div className="right-col" style={{ gridColumn: "span 4", display: "flex", flexDirection: "column", gap: "24px" }}>
+//             <div style={{ backgroundColor: "#0b1c30", color: "#ffffff", padding: "24px", borderRadius: "12px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+//               <div style={{ width: "48px", height: "48px", backgroundColor: "#00873a", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "20px" }}><span className="material-symbols-outlined" style={{ color: "#f7fff2" }}>qr_code_2</span></div>
+//               <h3 style={{ fontSize: "18px", fontWeight: 600, marginBottom: "6px" }}>Instant Join Link</h3>
+//               <p style={{ fontSize: "12px", color: "rgba(211, 228, 254, 0.6)", marginBottom: "20px" }}>Share this link for quick onboarding via WhatsApp or Slack.</p>
+//               <button onClick={() => { navigator.clipboard.writeText(invitePreviewLink); setCopySuccess(true); setMessage("Link copied!"); setMessageType("success"); setTimeout(() => setCopySuccess(false), 2000); }}
+//                 className="copy-link-btn"
+//                 style={{ width: "100%", padding: "14px", backgroundColor: "rgba(211, 228, 254, 0.1)", border: "1px solid rgba(211, 228, 254, 0.2)", borderRadius: "8px", fontWeight: 500, fontSize: "14px", fontFamily: "'Geist', sans-serif", color: "#ffffff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+//                 <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>{copySuccess ? "check" : "link"}</span>{copySuccess ? "Copied!" : "Copy Link"}
+//               </button>
+//             </div>
+
+//             {/* Group Summary */}
+//             <div style={{ backgroundColor: "#ffffff", padding: "24px", borderRadius: "12px", border: "1px solid rgba(189, 202, 186, 0.3)" }}>
+//               <h4 style={{ fontSize: "13px", fontWeight: 600, fontFamily: "'Geist', sans-serif", color: "#3e4a3d", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Group Summary</h4>
+//               <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "14px" }}>
+//                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Name</span><span style={{ fontWeight: 500 }}>{group.name}</span></div>
+//                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Members</span><span style={{ fontWeight: 500 }}>{group.member_count || 0}/{group.max_members || 20}</span></div>
+//                 <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Contribution</span><span style={{ fontWeight: 500, color: "#006b2c" }}>₦{(group.contribution_amount || 0).toLocaleString()}</span></div>
+//                 {group.rotation_order && group.rotation_order.length > 0 && (
+//                   <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#3e4a3d" }}>Type</span><span style={{ fontWeight: 500, color: "#825100", display: "flex", alignItems: "center", gap: "4px" }}><span className="material-symbols-outlined" style={{ fontSize: "14px" }}>cached</span> Rotating Ajo</span></div>
+//                 )}
+//               </div>
+//             </div>
+//           </div>
+
+//           {/* Pending Invitations Table */}
+//           <div className="table-col" style={{ gridColumn: "span 12" }}>
+//             <div style={{ backgroundColor: "#ffffff", borderRadius: "12px", boxShadow: "0 1px 3px rgba(0,0,0,0.05)", border: "1px solid rgba(189, 202, 186, 0.3)", overflow: "hidden" }}>
+//               <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(189, 202, 186, 0.3)", backgroundColor: "#f8f9ff" }}>
+//                 <h3 style={{ fontSize: "18px", fontWeight: 600, fontFamily: "'Inter', sans-serif" }}>Pending Invitations ({pendingInvites.length})</h3>
+//               </div>
+//               <div style={{ overflowX: "auto" }}>
+//                 {pendingInvites.length === 0 ? (
+//                   <div style={{ padding: "50px 24px", textAlign: "center", color: "#3e4a3d" }}>
+//                     <span className="material-symbols-outlined" style={{ fontSize: "44px", display: "block", marginBottom: "12px", color: "#bdcaba" }}>mail</span>
+//                     <p style={{ fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif" }}>No pending invitations. Send your first invite above.</p>
+//                   </div>
+//                 ) : (
+//                   <table className="invites-table" style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", minWidth: "550px" }}>
+//                     <thead><tr style={{ backgroundColor: "#eff4ff" }}><th style={th}>Recipient</th><th style={th}>Role</th><th style={th}>Sent</th><th style={th}>Status</th><th style={{ ...th, textAlign: "right" }}>Actions</th></tr></thead>
+//                     <tbody style={{ borderTop: "1px solid rgba(189, 202, 186, 0.2)" }}>
+//                       {pendingInvites.map((invite: any, i: number) => (
+//                         <tr key={i} style={{ borderBottom: "1px solid rgba(189, 202, 186, 0.2)", transition: "background-color 0.2s", cursor: "pointer" }}
+//                           onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#eff4ff"; }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}>
+//                           <td style={{ padding: "18px 20px" }}>
+//                             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+//                               <div style={{ width: "32px", height: "32px", borderRadius: "50%", backgroundColor: "#dae2fd", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "12px", color: "#5c647a", flexShrink: 0 }}>{invite.email?.charAt(0).toUpperCase() || "?"}</div>
+//                               <div><p style={{ fontSize: "14px", fontWeight: 500 }}>{invite.email}</p><p style={{ fontSize: "11px", color: "#6e7b6c" }}>{invite.note}</p></div>
+//                             </div>
+//                           </td>
+//                           <td style={{ padding: "18px 20px", fontSize: "13px", textTransform: "capitalize" }}>{invite.role}</td>
+//                           <td style={{ padding: "18px 20px", fontSize: "13px", color: "#3e4a3d" }}>{invite.date}</td>
+//                           <td style={{ padding: "18px 20px" }}><span style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 10px", borderRadius: "9999px", fontSize: "11px", fontWeight: 600, backgroundColor: invite.status === "awaiting" ? "rgba(130, 81, 0, 0.1)" : invite.status === "clicked" ? "rgba(0, 107, 44, 0.1)" : "rgba(186, 26, 26, 0.1)", color: invite.status === "awaiting" ? "#825100" : invite.status === "clicked" ? "#006b2c" : "#ba1a1a" }}><span style={{ width: "5px", height: "5px", borderRadius: "50%", backgroundColor: "currentColor" }} />{invite.status === "awaiting" ? "Awaiting" : invite.status === "clicked" ? "Clicked" : "Failed"}</span></td>
+//                           <td style={{ padding: "18px 20px", textAlign: "right" }}>
+//                             <button onClick={() => { navigator.clipboard.writeText(invitePreviewLink); setMessage("Link copied!"); setMessageType("success"); }} style={{ background: "none", border: "none", color: "#006b2c", cursor: "pointer", fontSize: "12px", fontWeight: 600 }}>Resend</button>
+//                           </td>
+//                         </tr>
+//                       ))}
+//                     </tbody>
+//                   </table>
+//                 )}
+//               </div>
+//             </div>
+//           </div>
+//         </div>
+//       </div>
+
+//       {/* Mobile Responsive Styles */}
+//       <style jsx>{`
+//         @media (max-width: 900px) {
+//           .add-members-grid { grid-template-columns: 1fr !important; }
+//           .form-col { grid-column: span 1 !important; }
+//           .right-col { grid-column: span 1 !important; }
+//           .table-col { grid-column: span 1 !important; }
+//         }
+//         @media (max-width: 600px) {
+//           .page-title { font-size: 24px !important; }
+//           .header-row { flex-direction: column !important; align-items: stretch !important; }
+//           .send-btn { width: 100%; justify-content: center; }
+//           .form-row-2 { grid-template-columns: 1fr !important; }
+//           .preview-text { font-size: 13px !important; }
+//           .preview-link-row { flex-direction: column !important; align-items: flex-start !important; }
+//           .invites-table { font-size: 12px !important; }
+//           .invites-table th, .invites-table td { padding: 12px 14px !important; }
+//         }
+//       `}</style>
+//     </div>
+//   );
+// }
+
+// const lbl: React.CSSProperties = { fontSize: "14px", fontWeight: 500, fontFamily: "'Geist', sans-serif", color: "#3e4a3d", marginBottom: "6px", display: "block" };
+// const inp: React.CSSProperties = { width: "100%", padding: "14px 16px", border: "1px solid rgba(189, 202, 186, 0.5)", borderRadius: "8px", backgroundColor: "#f8f9ff", outline: "none", fontSize: "15px", fontFamily: "'Inter', sans-serif", boxSizing: "border-box" };
+// const sel: React.CSSProperties = { ...inp, cursor: "pointer" };
+// const th: React.CSSProperties = { padding: "14px 20px", fontSize: "11px", fontWeight: 600, fontFamily: "'Geist', sans-serif", color: "#6e7b6c", textTransform: "uppercase", letterSpacing: "0.05em" };
 
 
 
